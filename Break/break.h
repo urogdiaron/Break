@@ -18,7 +18,10 @@ using vec = sf::Vector2f;
 
 struct Paddle
 {
+    // Center of the rectangle
     vec position;
+
+    // Width of the rectangle
     float size = 150.0f;
 };
 

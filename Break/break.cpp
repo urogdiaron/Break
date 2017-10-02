@@ -1,7 +1,7 @@
 #include "break.h"
 
 const float paddleHeight = 25.0f;
-const float ballRadius = 10.0f;
+const float ballRadius = 100.0f;
 const float ballStartingSpeed = 3500.0f;
 
 std::unique_ptr<Globals> g_Globals;
@@ -26,6 +26,30 @@ vec vec_normalize(vec v)
     return v / vec_length(v);
 }
 
+float lerp(float from, float to, float t)
+{
+    return from + t * (to - from);
+}
+
+void render_rect(vec topLeft, vec scale)
+{
+    topLeft.y = g_Globals->screenSize.y - topLeft.y;
+
+    sf::RenderStates renderState;
+    renderState.transform.translate(topLeft).scale(scale);
+    g_Globals->window.draw(g_Globals->rectPrototype, renderState);
+}
+
+void render_circle(vec center, float radius)
+{
+    center.y = g_Globals->screenSize.y - center.y;
+    center.x -= radius;
+    center.y -= radius;
+    sf::RenderStates renderState;
+    renderState.transform.translate(center).scale(radius, radius);
+    g_Globals->window.draw(g_Globals->circlePrototype, renderState);
+}
+
 void init_globals()
 {
     g_Globals = std::make_unique<Globals>();
@@ -36,11 +60,7 @@ void init_globals()
     g_Globals->rectPrototype.setFillColor(sf::Color::White);
 
     g_Globals->circlePrototype.setRadius(1.0f);
-    g_Globals->circlePrototype.setOutlineThickness(0.1f);
-    g_Globals->circlePrototype.setOrigin(vec{0.5f, 0.5f});
-
-    g_Globals->circlePrototype.setFillColor(sf::Color::White);
-    g_Globals->circlePrototype.setOutlineColor(sf::Color::Black);
+    g_Globals->circlePrototype.setFillColor(sf::Color(100,100,100));
 }
 
 void place_ball_on_paddle(Ball* ball, Paddle* paddle)
@@ -68,9 +88,11 @@ void update_paddle(Paddle* paddle, vec mousePosition)
 
 void update_ball(Ball* ball)
 {
+    auto paddle = &g_Globals->gameState.paddle;
+
     if (ball->waitingToBeFired)
     {
-        place_ball_on_paddle(ball, &g_Globals->gameState.paddle);
+        place_ball_on_paddle(ball, paddle);
         return;
     }
 
@@ -87,36 +109,53 @@ void update_ball(Ball* ball)
         ball->position.x = g_Globals->screenSize.x - ballRadius;
         ball->velocity.x *= -1.0f;
     }
-
-    if (ball->position.y - ballRadius < 0)
-    {
-        ball->position.y = ballRadius;
-        ball->velocity.y *= -1.0f;
-    }
-    else if (ball->position.y + ballRadius > g_Globals->screenSize.y)
+    
+    if (ball->position.y + ballRadius > g_Globals->screenSize.y)
     {
         ball->position.y = g_Globals->screenSize.y - ballRadius;
         ball->velocity.y *= -1.0f;
     }
-}
 
-void render_rect(vec topLeft, vec scale)
-{
-    topLeft.y = g_Globals->screenSize.y - topLeft.y;
+    float paddleTop = paddle->position.y + paddleHeight * 0.5f;
 
-    sf::RenderStates renderState;
-    renderState.transform.translate(topLeft).scale(scale);
-    g_Globals->window.draw(g_Globals->rectPrototype, renderState);
-}
+    if(ball->position.y < 0.0f)
+    {
+        place_ball_on_paddle(ball, paddle);
+    }
+    else if(ball->velocity.y < 0.0f && ball->position.y - ballRadius < paddleTop && ball->position.y > paddleTop)
+    {
+        // The AABB of the ball overlaps with that of the paddle. Check for circle - segment collision.
+        vec paddleTopLeft = paddle->position + vec(-paddle->size * 0.5f, paddleHeight * 0.5f);
+        vec toPaddle = paddleTopLeft - ball->position;
 
-void render_circle(vec center, float radius)
-{
-    center.y = g_Globals->screenSize.y - center.y;
-    center.x -= radius;
-    center.y -= radius;
-    sf::RenderStates renderState;
-    renderState.transform.translate(center).scale(radius, radius);
-    g_Globals->window.draw(g_Globals->circlePrototype, renderState);
+        float a = paddle->size * paddle->size;
+        float b = 2 * toPaddle.x * paddle->size;
+        float c = vec_dot(toPaddle, toPaddle) - ballRadius * ballRadius;
+
+        float collisionParam = -1.0f;
+        float discriminant = b*b - 4 * a*c;
+        if (discriminant >= 0)
+        {
+            discriminant = sqrt(discriminant);
+            float t1 = (-b - discriminant) / (2 * a);
+            float t2 = (-b + discriminant) / (2 * a);
+            if (t1 >= 0 && t1 <= 1)
+            {
+                collisionParam = t1;
+            }
+            if (t2 >= 0 && t2 <= 1)
+            {
+                collisionParam = t2;
+            }
+        }
+
+        if(collisionParam >= 0)
+        {
+            ball->velocity.y = 1;
+            ball->velocity.x = lerp(-1, 1, collisionParam);
+            ball->velocity = vec_normalize(ball->velocity) * ballStartingSpeed;
+        }
+    }
 }
 
 void render_paddle(Paddle* paddle)
