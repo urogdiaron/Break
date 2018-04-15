@@ -6,6 +6,8 @@
 #include <SFML/Graphics.hpp>
 #include <cstdint>
 
+#include "util.h"
+
 using int16 = int16_t;
 using int32 = int32_t;
 using int64 = int64_t;
@@ -32,10 +34,17 @@ struct Ball
     bool waitingToBeFired;
 };
 
+struct Brick
+{
+    vec position;
+    vec size;
+};
+
 struct GameState
 {
     Paddle paddle;
     Ball ball;
+    std::vector<Brick> bricks;
 };
 
 struct Globals
