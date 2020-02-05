@@ -1,0 +1,15 @@
+-r
+D:\Code\Break\Break\My Amplifier Results - Break\r000hs
+--stack-stitching
+--data-limit-mb=500
+--disk-space-limit=0
+--mrte-type=java,dotnet,python
+--itt-config=frame
+--stackwalk=offline
+--type=cswitch
+--mrte-mode=auto
+--type=cpu:counters:nostack
+--type=cpu:stack
+--interval=10
+--
+D:\Code\Break\x64\Debug\Break.exe
