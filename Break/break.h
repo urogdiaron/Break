@@ -7,6 +7,10 @@
 #include <cstdint>
 
 #include "util.h"
+#include "../../Ecs/Project1/view.h"
+
+#include "vec.h"
+#include "collision.h"
 
 using int16 = int16_t;
 using int32 = int32_t;
@@ -15,40 +19,57 @@ using uint16 = uint16_t;
 using uint32 = uint32_t;
 using uint64 = uint64_t;
 using uint = unsigned int;
+using entityId = ecs::entityId;
 
-using vec = sf::Vector2f;
+struct Position : public vec
+{
+    using vec::Vector2;
+};
+
+struct Size : public vec
+{
+    using vec::Vector2;
+};
+
+struct Velocity : public vec
+{
+    using vec::Vector2;
+};
 
 struct Paddle
 {
-    // Center of the rectangle
-    vec position;
-    // Width of the rectangle
-    float size = 150.0f;
+};
+
+struct AttachedToPaddle
+{
+    entityId paddleId;
+    vec relativePos;
 };
 
 struct Ball
 {
-    vec position;
-    vec velocity;
-    bool waitingToBeFired;
 };
 
 struct Brick
 {
-    vec position;
+	vec position;
     vec size;
 };
 
 struct GameState
 {
-    Paddle paddle;
-    std::vector<Brick> bricks;
-    std::vector<Ball> balls;
-    std::vector<Ball*> ballsStuckToPaddle;
+};
+
+struct BallCollision
+{
+    OverlapResult overlap;
+    entityId ballId;
+    entityId otherObjectId;
 };
 
 struct Globals
 {
+    ecs::Ecs ecs;
     GameState gameState;
     vec screenSize{ 800, 600 };
     sf::RenderWindow window{ sf::VideoMode{ (uint)screenSize.x, (uint)screenSize.y }, "Break" };
@@ -58,4 +79,6 @@ struct Globals
     sf::RenderStates renderState;
 
     sf::Clock clock;
+
+    std::vector<BallCollision> ballCollisions;
 };

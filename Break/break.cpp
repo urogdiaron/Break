@@ -1,6 +1,4 @@
 #include "break.h"
-#include "vec.h"
-#include "collision.h"
 
 const float paddleHeight = 25.0f;
 const float ballRadius = 20.0f;
@@ -41,10 +39,14 @@ void render_circle(vec center, float radius, sf::Color color = sf::Color::White)
     g_Globals.window.draw(g_Globals.circlePrototype, renderState);
 }
 
+ecs::Ecs& getEcs()
+{
+    return g_Globals.ecs;
+}
+
 void init_globals()
 {
-    g_Globals.gameState.paddle.position.y = paddleHeight * 0.5f;
-
+    //g_Globals.gameState  paddle.position.y = paddleHeight * 0.5f;
     g_Globals.rectPrototype.setSize(vec{ 1.0f, 1.0f });
     g_Globals.rectPrototype.setOrigin(vec{0.5f, 0.5f});
     g_Globals.rectPrototype.setFillColor(sf::Color::White);
@@ -55,13 +57,15 @@ void init_globals()
 
 void setup_level(GameState& gamestate)
 {
+    auto& ecs = getEcs();
+
+    // Create the paddle
+    entityId paddleId = ecs.createEntity<Position, Size, Paddle>(Position{ g_Globals.screenSize.x * 0.5f, paddleHeight * 0.5f }, Size{ 150.0f, paddleHeight }, Paddle{});
+
     int rows = 15;
     int columns = 15;
 
     float brickSpacing = 5;
-
-    gamestate.bricks.clear();
-    gamestate.bricks.reserve(rows*columns);
 
 	float levelMarginHorizontal = 50.0f;
 	float levelMarginTop = 30.0f;
@@ -74,50 +78,145 @@ void setup_level(GameState& gamestate)
 	vec currentBrickPos{ levelMarginHorizontal + brickSize.x * 0.5f, g_Globals.screenSize.y - levelMarginTop - brickSize.y * 0.5f };
 	vec originalBrickPosition = currentBrickPos; // for resetting after new line
 
+
 	for (int j = 0; j < rows; j++)
     {
 		for (int i = 0; i < columns; i++)
 		{
-            gamestate.bricks.push_back(Brick{ currentBrickPos, brickSize });
+            ecs.createEntity<Position, Size, Brick>(Position{ currentBrickPos }, Size{ brickSize }, Brick{});
             currentBrickPos.x += brickSize.x + brickSpacing;
         }
         currentBrickPos.x = originalBrickPosition.x;
         currentBrickPos.y -= brickSize.y + brickSpacing;
     }
-
-    gamestate.balls.push_back(Ball{});
 }
 
-void place_ball_on_paddle(Ball& ball, Paddle& paddle, std::vector<Ball*>& ballsOnPaddle)
+void spawn_ball_on_paddle()
 {
-    ball.position.x = paddle.position.x;
-    ball.position.y = paddle.position.y + paddleHeight * 0.5f + ballRadius;
-    ball.waitingToBeFired = true;
+    auto& ecs = getEcs();
+    ecs::View<Position, Size, Paddle> paddleView(ecs);
+    auto itPaddle = paddleView.begin();
+    if (itPaddle == paddleView.end())
+        return;
 
-    ballsOnPaddle.push_back(&ball);
+    auto& [id, pos, size, paddle] = *itPaddle;
+    vec ballPosition = pos + vec(0.0f, size.y * 0.5f + ballRadius);
+
+    ecs.createEntity<Position, Velocity, Ball, AttachedToPaddle>(
+        Position{ ballPosition }, 
+        Velocity{}, 
+        Ball{}, 
+        AttachedToPaddle{ id, vec(0.0f, size.y * 0.5f + ballRadius) 
+    });
 }
 
-void fire_ball(Ball& ball, std::vector<Ball*>& ballsOnPaddle)
+void fire_ball()
 {
-    if (ball.waitingToBeFired)
+    ecs::View<Ball, AttachedToPaddle, Velocity> view(getEcs());
+    for (auto& [id, ball, attach, vel] : view)
     {
-        ball.waitingToBeFired = false;
-        ball.velocity = vec_normalize(vec{1,1}) * ballStartingSpeed;
+        (vec&)vel = vec_normalize(vec{ 1,1 }) * ballStartingSpeed;
+        view.deleteComponents(id, ecs::getTypes<AttachedToPaddle>());
     }
-    auto it = std::find(ballsOnPaddle.begin(), ballsOnPaddle.end(), &ball);
-    if (it != ballsOnPaddle.end())
-    {
-        unordered_delete(ballsOnPaddle, it);
-    }
+    view.executeCommmandBuffer(getEcs());
 }
 
-void update_paddle(Paddle* paddle, vec mousePosition)
+void update_positions_by_velocities()
 {
-    paddle->position.x = mousePosition.x;
-    paddle->position.x = std::max(paddle->position.x, paddle->size * 0.5f);
-    paddle->position.x = std::min(paddle->position.x, g_Globals.screenSize.x - paddle->size * 0.5f);
+    float dt = g_Globals.clock.getElapsedTime().asSeconds();
+    for (auto& [id, pos, vel] : ecs::View<Position, Velocity>(getEcs()))
+    {
+        pos += vel * dt;
+    }
 }
 
+void update_ball_collisions()
+{
+    g_Globals.ballCollisions.clear();
+    for (auto& [ballId, ballPos, ball] : ecs::View<Position, Ball>(getEcs()))
+    {
+        // Collide with the screen edge
+        if (ballPos.x - ballRadius < 0)
+        {
+            BallCollision ballCollision;
+            ballCollision.ballId = ballId;
+            ballCollision.otherObjectId = 0;
+            ballCollision.overlap.penetration = -(ballPos.x - ballRadius);
+            ballCollision.overlap.collisionPoint = vec(0, ballPos.y);
+            ballCollision.overlap.normal = vec(1, 0);
+            g_Globals.ballCollisions.push_back(ballCollision);
+        }
+        else if (ballPos.x + ballRadius > g_Globals.screenSize.x)
+        {
+            BallCollision ballCollision;
+            ballCollision.ballId = ballId;
+            ballCollision.otherObjectId = 0;
+            ballCollision.overlap.penetration = ballPos.x + ballRadius - g_Globals.screenSize.x;
+            ballCollision.overlap.collisionPoint = vec(g_Globals.screenSize.x, ballPos.y);
+            ballCollision.overlap.normal = vec(-1, 0);
+            g_Globals.ballCollisions.push_back(ballCollision);
+        }
+
+        if (ballPos.y + ballRadius > g_Globals.screenSize.y)
+        {
+            BallCollision ballCollision;
+            ballCollision.ballId = ballId;
+            ballCollision.otherObjectId = 0;
+            ballCollision.overlap.penetration = ballPos.y + ballRadius - g_Globals.screenSize.y;
+            ballCollision.overlap.collisionPoint = vec(ballPos.x, g_Globals.screenSize.y);
+            ballCollision.overlap.normal = vec(0, -1);
+            g_Globals.ballCollisions.push_back(ballCollision);
+        }
+
+        for (auto& [brickId, brickPos, brickSize, brick] : ecs::View<Position, Size, Brick>(getEcs()))
+        {
+            BallCollision ballCollision;
+            bool overlap = test_circle_aabb_overlap(ballCollision.overlap, ballPos, ballRadius, brickPos - brickSize * 0.5f, brickPos + brickSize * 0.5f, false);
+            if (overlap)
+            {
+                ballCollision.ballId = ballId;
+                ballCollision.otherObjectId = brickId;
+                g_Globals.ballCollisions.push_back(ballCollision);
+            }
+        }
+
+        for (auto& [paddleId, paddlePos, paddleSize, paddle] : ecs::View<Position, Size, Paddle>(getEcs()))
+        {
+            BallCollision ballCollision;
+            bool overlap = test_circle_aabb_overlap(ballCollision.overlap, ballPos, ballRadius, paddlePos - paddleSize * 0.5f, paddlePos + paddleSize * 0.5f, false);
+            if (overlap)
+            {
+                ballCollision.ballId = ballId;
+                ballCollision.otherObjectId = paddleId;
+                float toBall = ballPos.x - paddlePos.x;
+                toBall /= paddleSize.x;
+                ballCollision.overlap.normal.x = lerp(0.0f, 0.4f, toBall);
+                ballCollision.overlap.normal = vec_normalize(ballCollision.overlap.normal);
+
+                g_Globals.ballCollisions.push_back(ballCollision);
+            }
+        }
+    }
+}
+
+void resolve_ball_collisions()
+{
+    auto& ecs = getEcs();
+    for (auto& ballCollision : g_Globals.ballCollisions)
+    {
+        auto [pos, vel] = ecs.getComponents<Position, Velocity>(ballCollision.ballId);
+
+        // this assumes the bricks are not moving!
+        // so that their relative velocities are the same as the ball's velocity
+        if (vec_dot(*vel, ballCollision.overlap.normal) > 0)
+            continue;
+
+        (vec&)*vel = vec_reflect(*vel, ballCollision.overlap.normal);
+        //(vec&)*pos += ballCollision.overlap.normal * ballCollision.overlap.penetration;
+    }
+}
+
+#if 0
 void update_ball_debug(Ball* ball, vec mousePosition)
 {
     ball->position = mousePosition;
@@ -126,11 +225,11 @@ void update_ball_debug(Ball* ball, vec mousePosition)
 
 void render_debug()
 {
-    Ball* ball = &g_Globals.gameState.balls[0];
-    for (int i = 0; i < g_Globals.gameState.bricks.size(); i++)
+    Ball* ball = &g_Globals.gameState.balls.begin()->second;
+    for (auto& it : g_Globals.gameState.bricks)
     {
-        auto& brick = g_Globals.gameState.bricks[i];
-        AabbOverlapResult result;
+		auto& brick = it.second;
+        OverlapResult result;
         bool overlap = test_circle_aabb_overlap(result, ball->position, ballRadius, brick.position - brick.size * 0.5f, brick.position + brick.size * 0.5f, false);
         if (overlap)
         {
@@ -141,7 +240,7 @@ void render_debug()
 
 bool is_ball_under_screen(Ball& ball)
 {
-    AabbOverlapResult overlapDetails;
+    OverlapResult overlapDetails;
     bool overlap = test_circle_aabb_overlap(overlapDetails, ball.position, ballRadius, vec{ 0, -1000 }, vec{ g_Globals.screenSize.x, 0 }, true);
     return overlap;
 }
@@ -149,16 +248,15 @@ bool is_ball_under_screen(Ball& ball)
 void collision_ball(Ball& ball)
 {
     auto& bricks = g_Globals.gameState.bricks;
-    for (int i = 0; i < bricks.size(); i++)
+    for (auto& it : g_Globals.gameState.bricks)
     {
-        auto& brick = g_Globals.gameState.bricks[i];
-        AabbOverlapResult result;
+		auto& brick = it.second;
+        OverlapResult result;
         bool overlap = test_circle_aabb_overlap(result, ball.position, ballRadius, brick.position - brick.size * 0.5f, brick.position + brick.size * 0.5f, false);
         if (overlap)
         {
             ball.velocity = vec_reflect(ball.velocity, result.normal);
-            unordered_delete(bricks, bricks.begin() + i);
-            i--;
+			deleteEntity(it.first);
         }
     }
 }
@@ -167,9 +265,9 @@ void update_ball(Ball& ball)
 {
     Paddle& paddle = g_Globals.gameState.paddle;
 
-    if (ball.waitingToBeFired)
+    if (ball.holderPaddle)
     {
-        place_ball_on_paddle(ball, paddle, g_Globals.gameState.ballsStuckToPaddle);
+        place_ball_on_paddle(ball, paddle);
         return;
     }
 
@@ -199,7 +297,7 @@ void update_ball(Ball& ball)
 
     if(is_ball_under_screen(ball))
     {
-        place_ball_on_paddle(ball, paddle, g_Globals.gameState.ballsStuckToPaddle);
+        place_ball_on_paddle(ball, paddle);
     }
     else if(ball.velocity.y < 0.0f && ball.position.y - ballRadius < paddleTop && ball.position.y > paddleTop)
     {
@@ -217,21 +315,63 @@ void update_ball(Ball& ball)
         }
     }
 }
+#endif
 
-void render_paddle(Paddle* paddle)
+void render_paddle()
 {
-    vec paddleSize{paddle->size, paddleHeight};
-    render_rect(paddle->position, paddleSize, sf::Color(50, 50, 200));
+    for (auto& [id, pos, size, paddle] : ecs::View<Position, Size, Paddle>(getEcs()))
+    {
+        render_rect(pos, size, sf::Color(50, 50, 200));
+    }
+
 }
 
-void render_balls(const std::vector<Ball>& balls)
+void render_balls()
 {
-    for (auto& ball : balls)
+    for (auto& [id, pos, ball] : ecs::View<Position, Ball>(getEcs()))
     {
-        render_circle(ball.position, ballRadius, sf::Color(100, 100, 100));
+        render_circle(pos, ballRadius, sf::Color(100, 100, 100));
     }
 }
 
+void render_bricks()
+{
+    for (auto& [id, pos, size, brick] : ecs::View<Position, Size, Brick>(getEcs()))
+    {
+        render_rect(pos, size, sf::Color::Magenta);
+    }
+}
+
+void update()
+{
+    float dt = g_Globals.clock.getElapsedTime().asSeconds();
+    auto& ecs = getEcs();
+
+    // Move the paddle to the mouse
+    vec mousePosition{ sf::Mouse::getPosition(g_Globals.window) };
+    float screenSizeX = g_Globals.screenSize.x;
+    for (auto& [id, pos, size, paddle] : ecs::View<Position, Size, Paddle>(ecs))
+    {
+        pos.x = mousePosition.x;
+        pos.x = std::max(pos.x, size.x * 0.5f);
+        pos.x = std::min(pos.x, screenSizeX - size.x * 0.5f);
+    }
+
+    // Update things attached to the paddle
+    for (auto& [id, pos, attach] : ecs::View<Position, AttachedToPaddle>(ecs))
+    {
+        auto paddlePos = ecs.getComponent<Position>(attach.paddleId);
+        if (!paddlePos)
+            continue;
+        (vec&)pos = *paddlePos + attach.relativePos;
+    }
+
+    update_positions_by_velocities();
+    update_ball_collisions();
+    resolve_ball_collisions();
+}
+
+#if 0
 void update()
 {
     vec mousePosition{sf::Mouse::getPosition(g_Globals.window)};
@@ -243,31 +383,28 @@ void update()
     }
     else
     {
-        for(Ball& ball : g_Globals.gameState.balls)
+        for(auto& it: g_Globals.gameState.balls)
         {
-            update_ball(ball);
+            update_ball(it.second);
         }
     }
+
+	deleteEntitiesFromMemory();
 }
 
-void render_bricks(const std::vector<Brick>& bricks)
-{
-    for (auto& brick : bricks)
-    {
-        render_rect(brick.position, brick.size, sf::Color::Magenta);
-    }
-}
+
+#endif
 
 void render()
 {
-    render_paddle(&g_Globals.gameState.paddle);
-    render_balls(g_Globals.gameState.balls);
-    render_bricks(g_Globals.gameState.bricks);
-
-    if (g_debugBall)
-    {
-        render_debug();
-    }
+    render_paddle();
+    render_balls();
+    render_bricks();
+    //
+    //if (g_debugBall)
+    //{
+    //    render_debug();
+    //}
 }
 
 sf::Text text;
@@ -294,7 +431,7 @@ int main()
     auto& window = g_Globals.window;
     window.setMouseCursorVisible(false);
 
-    place_ball_on_paddle(g_Globals.gameState.balls[0], g_Globals.gameState.paddle, g_Globals.gameState.ballsStuckToPaddle);
+    spawn_ball_on_paddle();
 
     // run the program as long as the window is open
     while (window.isOpen())
@@ -323,7 +460,7 @@ int main()
             {
                 if (event.mouseButton.button == sf::Mouse::Left)
                 {
-                    fire_ball(g_Globals.gameState.balls[0], g_Globals.gameState.ballsStuckToPaddle);
+                    fire_ball();
                 }
             }
         }

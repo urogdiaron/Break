@@ -1,10 +1,12 @@
+#pragma once
+
 struct SegmentOverlapResult
 {
     float collisionParam;
     bool overlapped;
 };
 
-struct AabbOverlapResult
+struct OverlapResult
 {
     vec normal;
     vec collisionPoint;
@@ -54,26 +56,73 @@ SegmentOverlapResult test_circle_segment_overlap(vec circleCenter, float circleR
     return res;
 }
 
-bool test_circle_aabb_overlap(AabbOverlapResult& result, vec circleCenter, float circleRadius, vec aabbMin, vec aabbMax, bool bTestOnly)
+// Taken from https://gamedevelopment.tutsplus.com/tutorials/how-to-create-a-custom-2d-physics-engine-the-basics-and-impulse-resolution--gamedev-6331
+bool test_circle_aabb_overlap(OverlapResult& result, vec circleCenter, float circleRadius, vec aabbMin, vec aabbMax, bool bTestOnly)
 {
     result = {};
-    vec aabbPointClosestToCircleCenter
+    vec halfExtent = (aabbMax - aabbMin) * 0.5f;
+    vec aabbCenter = aabbMin + halfExtent;
+
+    vec toCircle = circleCenter - aabbCenter;
+
+    vec closestDistanceToCircleFromAabbCenter
     {
-        clamp(circleCenter.x, aabbMin.x, aabbMax.x),
-        clamp(circleCenter.y, aabbMin.y, aabbMax.y)
+        clamp(toCircle.x, -halfExtent.x, halfExtent.x),
+        clamp(toCircle.y, -halfExtent.y, halfExtent.y)
     };
-    float distanceSq = vec_lengthsq(circleCenter - aabbPointClosestToCircleCenter);
-    bool bOverlap = (distanceSq <= circleRadius * circleRadius);
-    if (bTestOnly)
+
+    bool circleCenterInsideAabb = false;
+    if (toCircle == closestDistanceToCircleFromAabbCenter)
     {
-        return bOverlap;
+        circleCenterInsideAabb = true;
+
+        // Find closest axis
+        if (abs(toCircle.x) > abs(toCircle.y))
+        {
+            // Clamp to closest extent
+            if (closestDistanceToCircleFromAabbCenter.x > 0)
+                closestDistanceToCircleFromAabbCenter.x = halfExtent.x;
+            else
+                closestDistanceToCircleFromAabbCenter.x = -halfExtent.x;
+        }
+
+        // y axis is shorter
+        else
+        {
+            // Clamp to closest extent
+            if (closestDistanceToCircleFromAabbCenter.y > 0)
+                closestDistanceToCircleFromAabbCenter.y = halfExtent.y;
+            else
+                closestDistanceToCircleFromAabbCenter.y = -halfExtent.y;
+        }
     }
 
-    float distance = sqrt(distanceSq);
-    result.penetration = distance - circleRadius;
-    result.normal = circleCenter - aabbPointClosestToCircleCenter;
-    result.normal /= distance;
-    result.collisionPoint = aabbPointClosestToCircleCenter;
+    result.normal = toCircle - closestDistanceToCircleFromAabbCenter;
+    float d = vec_lengthsq(result.normal);
+    float r = circleRadius;
 
-    return bOverlap;
+
+    // Early out of the radius is shorter than distance to closest point and
+    // Circle not inside the AABB
+    if (d > r* r && !circleCenterInsideAabb)
+        return false;
+
+    // Avoided sqrt until we needed
+    d = sqrt(d);
+    result.normal /= d;
+
+    // Collision normal needs to be flipped to point outside if circle was
+    // inside the AABB
+    if (circleCenterInsideAabb)
+    {
+        result.normal = vec_normalize(-toCircle);
+        result.penetration = r - d;
+    }
+    else
+    {
+        result.penetration = d - r;
+    }
+
+
+    return true;
 }

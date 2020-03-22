@@ -1,3 +1,6 @@
+#pragma once
+using vec = sf::Vector2f;
+
 constexpr float clamp(float value, float min, float max)
 {
     return std::max(std::min(max, value), min);
