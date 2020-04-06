@@ -12,6 +12,11 @@
 #include "vec.h"
 #include "collision.h"
 
+#define BUILD_WITH_EASY_PROFILER
+#define EASY_OPTION_START_LISTEN_ON_STARTUP 1
+#define EASY_OPTION_LOG_ENABLED 1
+#include "easy/profiler.h"
+
 using int16 = int16_t;
 using int32 = int32_t;
 using int64 = int64_t;
@@ -78,7 +83,7 @@ struct Globals
     sf::CircleShape circlePrototype;
     sf::RenderStates renderState;
 
-    sf::Clock clock;
-
     std::vector<BallCollision> ballCollisions;
+    float ballRespawnTimer = -1;
+    float elapsedTime;
 };

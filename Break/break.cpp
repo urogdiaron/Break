@@ -2,7 +2,7 @@
 
 const float paddleHeight = 25.0f;
 const float ballRadius = 20.0f;
-const float ballStartingSpeed = 2000.0f;
+const float ballStartingSpeed = 150.0f;
 
 Globals g_Globals;
 
@@ -53,6 +53,15 @@ void init_globals()
 
     g_Globals.circlePrototype.setRadius(1.0f);
     g_Globals.circlePrototype.setFillColor(sf::Color(100, 100, 100));
+
+    auto& ecs = getEcs();
+    ecs.registerType<Position>("Position");
+    ecs.registerType<Size>("Size");
+    ecs.registerType<Velocity>("Velocity");
+    ecs.registerType<Paddle>("Paddle");
+    ecs.registerType<AttachedToPaddle>("AttachedToPaddle");
+    ecs.registerType<Ball>("Ball");
+    ecs.registerType<Brick>("Brick");        
 }
 
 void setup_level(GameState& gamestate)
@@ -123,7 +132,7 @@ void fire_ball()
 
 void update_positions_by_velocities()
 {
-    float dt = g_Globals.clock.getElapsedTime().asSeconds();
+    float dt = g_Globals.elapsedTime;
     for (auto& [id, pos, vel] : ecs::View<Position, Velocity>(getEcs()))
     {
         pos += vel * dt;
@@ -133,7 +142,8 @@ void update_positions_by_velocities()
 void update_ball_collisions()
 {
     g_Globals.ballCollisions.clear();
-    for (auto& [ballId, ballPos, ball] : ecs::View<Position, Ball>(getEcs()))
+    ecs::View<Position, Ball> pos_ball(getEcs());
+    for (auto& [ballId, ballPos, ball] : pos_ball)
     {
         // Collide with the screen edge
         if (ballPos.x - ballRadius < 0)
@@ -167,6 +177,10 @@ void update_ball_collisions()
             ballCollision.overlap.normal = vec(0, -1);
             g_Globals.ballCollisions.push_back(ballCollision);
         }
+        else if (ballPos.y < 0)
+        {   // Ball dies
+            pos_ball.deleteEntity(ballId);
+        }
 
         for (auto& [brickId, brickPos, brickSize, brick] : ecs::View<Position, Size, Brick>(getEcs()))
         {
@@ -197,6 +211,8 @@ void update_ball_collisions()
             }
         }
     }
+
+    pos_ball.executeCommmandBuffer(getEcs());
 }
 
 void resolve_ball_collisions()
@@ -214,6 +230,12 @@ void resolve_ball_collisions()
         (vec&)*vel = vec_reflect(*vel, ballCollision.overlap.normal);
         //(vec&)*pos += ballCollision.overlap.normal * ballCollision.overlap.penetration;
     }
+}
+
+bool has_balls_in_play()
+{
+    ecs::View<Ball> balls(getEcs());
+    return balls.getCount() > 0;
 }
 
 #if 0
@@ -344,7 +366,8 @@ void render_bricks()
 
 void update()
 {
-    float dt = g_Globals.clock.getElapsedTime().asSeconds();
+    EASY_FUNCTION();
+    float dt = g_Globals.elapsedTime;
     auto& ecs = getEcs();
 
     // Move the paddle to the mouse
@@ -369,6 +392,23 @@ void update()
     update_positions_by_velocities();
     update_ball_collisions();
     resolve_ball_collisions();
+
+    if (!has_balls_in_play())
+    {
+        if (g_Globals.ballRespawnTimer < 0)
+        {
+            g_Globals.ballRespawnTimer = 1.0f;
+        }
+    }
+
+    if (g_Globals.ballRespawnTimer >= 0.0f)
+    {
+        g_Globals.ballRespawnTimer -= g_Globals.elapsedTime;
+        if (g_Globals.ballRespawnTimer < 0)
+        {
+            spawn_ball_on_paddle();
+        }
+    }
 }
 
 #if 0
@@ -397,6 +437,7 @@ void update()
 
 void render()
 {
+    EASY_FUNCTION();
     render_paddle();
     render_balls();
     render_bricks();
@@ -412,8 +453,9 @@ sf::Font font;
 
 void render_stats()
 {
+    EASY_FUNCTION();
     char debugString[1024];
-    sprintf_s(debugString, "Frame time: %0.2f ms", g_Globals.clock.getElapsedTime().asMicroseconds() * 0.001f);
+    sprintf_s(debugString, "Frame time: %0.2f ms", g_Globals.elapsedTime * 1000.0f);
     text.setFont(font);
     text.setPosition(10, 10);
     text.setFillColor(sf::Color::Green);
@@ -423,6 +465,11 @@ void render_stats()
 
 int main()
 {
+    EASY_PROFILER_ENABLE;
+    profiler::startListen();
+
+    EASY_MAIN_THREAD;
+
     init_globals();
     setup_level(g_Globals.gameState);
 
@@ -433,9 +480,13 @@ int main()
 
     spawn_ball_on_paddle();
 
+    sf::Clock clock;
+
     // run the program as long as the window is open
     while (window.isOpen())
     {
+        sf::Time elapsedTime = clock.restart();
+        g_Globals.elapsedTime = elapsedTime.asSeconds();
         // check all the window's events that were triggered since the last iteration of the loop
         sf::Event event;
         while (window.pollEvent(event))
@@ -471,10 +522,12 @@ int main()
         update();
         render();
         render_stats();
-        // end the current frame
-        window.display();
 
-        g_Globals.clock.restart();
+        {
+            EASY_BLOCK("Display");
+            // end the current frame
+            window.display();
+        }
     }
 
     return 0;
