@@ -57,8 +57,13 @@ struct Ball
 
 struct Brick
 {
-	vec position;
-    vec size;
+    enum class Type
+    {
+        Simple,
+        Ballspawner
+    };
+    Type type = Type::Simple;
+    bool wasHitThisFrame = false;
 };
 
 struct GameState

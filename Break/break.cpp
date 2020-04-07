@@ -2,7 +2,7 @@
 
 const float paddleHeight = 25.0f;
 const float ballRadius = 20.0f;
-const float ballStartingSpeed = 150.0f;
+const float ballStartingSpeed = 400.0f;
 
 Globals g_Globals;
 
@@ -92,7 +92,11 @@ void setup_level(GameState& gamestate)
     {
 		for (int i = 0; i < columns; i++)
 		{
-            ecs.createEntity<Position, Size, Brick>(Position{ currentBrickPos }, Size{ brickSize }, Brick{});
+            Brick::Type brickType = Brick::Type::Simple;
+            if (rand() % 10 == 0)
+                brickType = Brick::Type::Ballspawner;
+
+            ecs.createEntity<Position, Size, Brick>(Position{ currentBrickPos }, Size{ brickSize }, Brick{brickType});
             currentBrickPos.x += brickSize.x + brickSpacing;
         }
         currentBrickPos.x = originalBrickPosition.x;
@@ -127,7 +131,6 @@ void fire_ball()
         (vec&)vel = vec_normalize(vec{ 1,1 }) * ballStartingSpeed;
         view.deleteComponents(id, ecs::getTypes<AttachedToPaddle>());
     }
-    view.executeCommmandBuffer(getEcs());
 }
 
 void update_positions_by_velocities()
@@ -190,6 +193,7 @@ void update_ball_collisions()
             {
                 ballCollision.ballId = ballId;
                 ballCollision.otherObjectId = brickId;
+                brick.wasHitThisFrame = true;
                 g_Globals.ballCollisions.push_back(ballCollision);
             }
         }
@@ -204,15 +208,13 @@ void update_ball_collisions()
                 ballCollision.otherObjectId = paddleId;
                 float toBall = ballPos.x - paddlePos.x;
                 toBall /= paddleSize.x;
-                ballCollision.overlap.normal.x = lerp(0.0f, 0.4f, toBall);
+                ballCollision.overlap.normal.x = lerp(0.0f, 0.9f, toBall);
                 ballCollision.overlap.normal = vec_normalize(ballCollision.overlap.normal);
 
                 g_Globals.ballCollisions.push_back(ballCollision);
             }
         }
     }
-
-    pos_ball.executeCommmandBuffer(getEcs());
 }
 
 void resolve_ball_collisions()
@@ -221,7 +223,6 @@ void resolve_ball_collisions()
     for (auto& ballCollision : g_Globals.ballCollisions)
     {
         auto [pos, vel] = ecs.getComponents<Position, Velocity>(ballCollision.ballId);
-
         // this assumes the bricks are not moving!
         // so that their relative velocities are the same as the ball's velocity
         if (vec_dot(*vel, ballCollision.overlap.normal) > 0)
@@ -229,6 +230,26 @@ void resolve_ball_collisions()
 
         (vec&)*vel = vec_reflect(*vel, ballCollision.overlap.normal);
         //(vec&)*pos += ballCollision.overlap.normal * ballCollision.overlap.penetration;
+    }
+}
+
+void handle_brick_collisions()
+{
+    auto& ecs = getEcs();
+    auto brickView = ecs::View<Position, Size, Brick>(ecs);
+    for (auto [brickId, pos, size, brick] : brickView)
+    {
+        if (brick.wasHitThisFrame)
+        {
+            if (brick.type == Brick::Type::Ballspawner)
+            {
+                vec ballPosition = pos - vec(0, size.y + ballRadius);
+                vec ballVelocity = vec(0, -ballStartingSpeed);
+                brickView.createEntity<Position, Velocity, Ball>(Position{ ballPosition }, Velocity{ ballVelocity }, Ball{});
+            }
+            brick.wasHitThisFrame = false;
+            brickView.deleteEntity(brickId);
+        }
     }
 }
 
@@ -360,7 +381,7 @@ void render_bricks()
 {
     for (auto& [id, pos, size, brick] : ecs::View<Position, Size, Brick>(getEcs()))
     {
-        render_rect(pos, size, sf::Color::Magenta);
+        render_rect(pos, size, brick.type == Brick::Type::Simple ? sf::Color::Magenta : sf::Color::Yellow);
     }
 }
 
@@ -392,6 +413,7 @@ void update()
     update_positions_by_velocities();
     update_ball_collisions();
     resolve_ball_collisions();
+    handle_brick_collisions();
 
     if (!has_balls_in_play())
     {
