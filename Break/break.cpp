@@ -130,7 +130,7 @@ void render_debug()
     for (int i = 0; i < g_Globals.gameState.bricks.size(); i++)
     {
         auto& brick = g_Globals.gameState.bricks[i];
-        AabbOverlapResult result;
+        OverlapResult result;
         bool overlap = test_circle_aabb_overlap(result, ball->position, ballRadius, brick.position - brick.size * 0.5f, brick.position + brick.size * 0.5f, false);
         if (overlap)
         {
@@ -141,7 +141,7 @@ void render_debug()
 
 bool is_ball_under_screen(Ball& ball)
 {
-    AabbOverlapResult overlapDetails;
+    OverlapResult overlapDetails;
     bool overlap = test_circle_aabb_overlap(overlapDetails, ball.position, ballRadius, vec{ 0, -1000 }, vec{ g_Globals.screenSize.x, 0 }, true);
     return overlap;
 }
@@ -152,7 +152,7 @@ void collision_ball(Ball& ball)
     for (int i = 0; i < bricks.size(); i++)
     {
         auto& brick = g_Globals.gameState.bricks[i];
-        AabbOverlapResult result;
+        OverlapResult result;
         bool overlap = test_circle_aabb_overlap(result, ball.position, ballRadius, brick.position - brick.size * 0.5f, brick.position + brick.size * 0.5f, false);
         if (overlap)
         {
