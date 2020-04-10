@@ -57,5 +57,5 @@ struct Globals
     sf::CircleShape circlePrototype;
     sf::RenderStates renderState;
 
-    sf::Clock clock;
+    float elapsedTime;
 };

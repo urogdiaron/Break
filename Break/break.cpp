@@ -176,7 +176,7 @@ void update_ball(Ball& ball)
     collision_ball(ball);
 
     // TODO simulate collisions correctly by taking the collision time and resimulating the rest of the time with the altered velocity
-    ball.position += ball.velocity * g_Globals.clock.getElapsedTime().asSeconds();
+    ball.position += ball.velocity * g_Globals.elapsedTime;
 
     if (ball.position.x - ballRadius < 0)
     {
@@ -276,7 +276,7 @@ sf::Font font;
 void render_stats()
 {
     char debugString[1024];
-    sprintf_s(debugString, "Frame time: %0.2f ms", g_Globals.clock.getElapsedTime().asMicroseconds() * 0.001f);
+    sprintf_s(debugString, "Frame time: %0.2f ms", g_Globals.elapsedTime * 1000.0f);
     text.setFont(font);
     text.setPosition(10, 10);
     text.setFillColor(sf::Color::Green);
@@ -296,9 +296,13 @@ int main()
 
     place_ball_on_paddle(g_Globals.gameState.balls[0], g_Globals.gameState.paddle, g_Globals.gameState.ballsStuckToPaddle);
 
+    sf::Clock clock;
+
     // run the program as long as the window is open
     while (window.isOpen())
     {
+        g_Globals.elapsedTime = clock.restart().asSeconds();
+
         // check all the window's events that were triggered since the last iteration of the loop
         sf::Event event;
         while (window.pollEvent(event))
@@ -336,8 +340,6 @@ int main()
         render_stats();
         // end the current frame
         window.display();
-
-        g_Globals.clock.restart();
     }
 
     return 0;
