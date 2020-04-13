@@ -77,6 +77,11 @@ struct BallCollision
     entityId otherObjectId;
 };
 
+struct Tile
+{
+    std::vector<ecs::entityId> ids;
+};
+
 struct Globals
 {
     ecs::Ecs ecs;
@@ -89,6 +94,7 @@ struct Globals
     sf::RenderStates renderState;
 
     std::vector<BallCollision> ballCollisions;
+    std::vector<Tile> tiles;
     float ballRespawnTimer = -1;
     float elapsedTime;
 };
