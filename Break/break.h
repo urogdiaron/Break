@@ -66,6 +66,14 @@ struct Brick
     bool wasHitThisFrame = false;
 };
 
+struct TileReference
+{
+    TileReference() = default;
+    TileReference(bool isBall) : isBall(isBall) {}
+    std::vector<std::pair<int, int>> tiles;
+    bool isBall = false;
+};
+
 struct GameState
 {
 };
@@ -94,7 +102,8 @@ struct Globals
     sf::RenderStates renderState;
 
     std::vector<BallCollision> ballCollisions;
-    std::vector<Tile> tiles;
+    std::vector<Tile> tilesBalls;
+    std::vector<Tile> tilesBricks;
     float ballRespawnTimer = -1;
     float elapsedTime;
 };

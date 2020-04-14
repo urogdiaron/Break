@@ -62,8 +62,11 @@ void init_tiles()
     int tileCountX = get_tile_count_x();
     int tileCountY = get_tile_count_y();
 
-    g_Globals.tiles.clear();
-    g_Globals.tiles.resize(tileCountX * tileCountY);
+    g_Globals.tilesBalls.clear();
+    g_Globals.tilesBalls.resize(tileCountX * tileCountY);
+
+    g_Globals.tilesBricks.clear();
+    g_Globals.tilesBricks.resize(tileCountX * tileCountY);
 }
 
 void init_globals()
@@ -80,6 +83,7 @@ void init_globals()
     ecs.registerType<Position>("Position");
     ecs.registerType<Size>("Size");
     ecs.registerType<Velocity>("Velocity");
+    ecs.registerType<TileReference>("TileReference");
     ecs.registerType<Paddle>("Paddle");
     ecs.registerType<AttachedToPaddle>("AttachedToPaddle");
     ecs.registerType<Ball>("Ball");
@@ -88,7 +92,7 @@ void init_globals()
     init_tiles();
 }
 
-void insert_into_tiles(ecs::entityId id, const Position& pos, const Size& size)
+void insert_into_tiles(ecs::entityId id, const Position& pos, const Size& size, TileReference& tileRef)
 {
     vec min = pos - size * 0.5f;
     vec max = pos + size * 0.5f;
@@ -101,17 +105,21 @@ void insert_into_tiles(ecs::entityId id, const Position& pos, const Size& size)
 
     int tileCountX = get_tile_count_x();
 
+    auto& tiles = tileRef.isBall ? g_Globals.tilesBalls : g_Globals.tilesBricks;
+
     for (int y = firstTileY; y <= lastTileY; y++)
     {
         for (int x = firstTileX; x <= lastTileX; x++)
         {
-            g_Globals.tiles[y * tileCountX + x].ids.push_back(id);
+            tiles[y * tileCountX + x].ids.push_back(id);
+            tileRef.tiles.push_back(std::make_pair(x, y));
         }
     }
 }
 
-void update_tiles_after_move(ecs::entityId id, const Position& oldPos, const Position& newPos, const Size& size)
+void update_tiles_after_move(ecs::entityId id, const Position& oldPos, const Position& newPos, const Size& size, TileReference& tileRef)
 {
+    EASY_FUNCTION();
     vec oldMin = oldPos - size * 0.5f;
     vec oldMax = oldPos + size * 0.5f;
 
@@ -132,6 +140,8 @@ void update_tiles_after_move(ecs::entityId id, const Position& oldPos, const Pos
 
     int tileCountX = get_tile_count_x();
 
+    auto& tiles = tileRef.isBall ? g_Globals.tilesBalls : g_Globals.tilesBricks;
+
     for (int y = oldFirstTileY; y <= oldLastTileY; y++)
     {
         bool isOutsideY = (y < newFirstTileY || y > newLastTileY);
@@ -140,10 +150,15 @@ void update_tiles_after_move(ecs::entityId id, const Position& oldPos, const Pos
             bool isOutsideX = (x < newFirstTileX || x > newLastTileX);
             if (isOutsideX || isOutsideY)
             {
-                auto& ids = g_Globals.tiles[y * tileCountX + x].ids;
+                auto& ids = tiles[y * tileCountX + x].ids;
                 auto it = std::find(ids.begin(), ids.end(), id);
                 if (it != ids.end())
+                {
                     unordered_delete(ids, it);
+                    auto itTileRef = std::find(tileRef.tiles.begin(), tileRef.tiles.end(), std::make_pair(x, y));
+                    if (itTileRef != tileRef.tiles.end())
+                        unordered_delete(tileRef.tiles, itTileRef);
+                }
             }
         }
     }
@@ -156,12 +171,29 @@ void update_tiles_after_move(ecs::entityId id, const Position& oldPos, const Pos
             bool isOutsideX = (x < oldFirstTileX || x > oldLastTileX);
             if (isOutsideX || isOutsideY)
             {
-                auto& ids = g_Globals.tiles[y * tileCountX + x].ids;
+                auto& ids = tiles[y * tileCountX + x].ids;
                 auto it = std::find(ids.begin(), ids.end(), id);
                 if (it == ids.end())
+                {
                     ids.push_back(id);
+                    tileRef.tiles.push_back(std::make_pair(x, y));
+                }
             }
         }
+    }
+}
+
+void update_tiles_for_deletion(ecs::entityId id, const TileReference& tileRef)
+{
+    int tileCountX = get_tile_count_x();
+    auto& tiles = tileRef.isBall ? g_Globals.tilesBalls : g_Globals.tilesBricks;
+
+    for (auto [x, y] : tileRef.tiles)
+    {
+        auto& ids = tiles[y * tileCountX + x].ids;
+        auto it = std::find(ids.begin(), ids.end(), id);
+        if (it != ids.end())
+            unordered_delete(ids, it);
     }
 }
 
@@ -172,13 +204,14 @@ void setup_level(GameState& gamestate)
     // Create the paddle
     auto pos = Position{ g_Globals.screenSize.x * 0.5f, paddleHeight * 0.5f };
     auto size = Size{ 150.0f, paddleHeight };
-    entityId paddleId = ecs.createEntity<Position, Size, Paddle>(pos, size, Paddle{});
-    insert_into_tiles(paddleId, pos, size);
+    entityId paddleId = ecs.createEntity<Position, Size, TileReference, Paddle>(pos, size, TileReference{false}, Paddle{});
+    auto tileRef = ecs.getComponent<TileReference>(paddleId);
+    insert_into_tiles(paddleId, pos, size, *tileRef);
 
-    int rows = 15;
-    int columns = 15;
+    int rows = 500;
+    int columns = 500;
 
-    float brickSpacing = 5;
+    float brickSpacing = 0;
 
 	float levelMarginHorizontal = 50.0f;
 	float levelMarginTop = 30.0f;
@@ -200,8 +233,9 @@ void setup_level(GameState& gamestate)
             //if (rand() % 10 == 0)
             //    brickType = Brick::Type::Ballspawner;
 
-            ecs::entityId id = ecs.createEntity<Position, Size, Brick>(Position{ currentBrickPos }, Size{ brickSize }, Brick{brickType});
-            insert_into_tiles(id, Position{ currentBrickPos }, Size{ brickSize });
+            ecs::entityId id = ecs.createEntity<Position, Size, TileReference, Brick>(Position{ currentBrickPos }, Size{ brickSize }, TileReference{ false }, Brick{ brickType });
+            auto tileRef = ecs.getComponent<TileReference>(id);
+            insert_into_tiles(id, Position{ currentBrickPos }, Size{ brickSize }, *tileRef);
 
             currentBrickPos.x += brickSize.x + brickSpacing;
         }
@@ -221,14 +255,17 @@ void spawn_ball_on_paddle()
     auto& [paddleId, pos, size, paddle] = *itPaddle;
     vec ballPosition = pos + vec(0.0f, size.y * 0.5f + ballRadius);
 
-    ecs::entityId ballId = ecs.createEntity<Position, Velocity, Ball, AttachedToPaddle>(
+    ecs::entityId ballId = ecs.createEntity<Position, Velocity, Ball, TileReference, AttachedToPaddle>(
         Position{ ballPosition }, 
         Velocity{}, 
         Ball{}, 
+        TileReference{ true },
         AttachedToPaddle{ paddleId, vec(0.0f, size.y * 0.5f + ballRadius)
     });
 
-    insert_into_tiles(ballId, Position{ ballPosition }, Size{ ballRadius * 2, ballRadius * 2});
+    auto tileRef = ecs.getComponent<TileReference>(ballId);
+
+    insert_into_tiles(ballId, Position{ ballPosition }, Size{ ballRadius * 2, ballRadius * 2}, *tileRef);
 }
 
 void fire_ball()
@@ -244,14 +281,14 @@ void fire_ball()
 void update_positions_by_velocities()
 {
     float dt = g_Globals.elapsedTime;
-    for (auto& [id, pos, vel] : ecs::View<Position, Velocity>(getEcs()))
+    for (auto& [id, pos, vel, tileRef] : ecs::View<Position, Velocity, TileReference>(getEcs()))
     {
         if (vel.x == 0.0f && vel.y == 0.0)
             continue;
 
         auto oldPos = pos;
         pos += vel * dt;
-        update_tiles_after_move(id, oldPos, pos, Size(ballRadius, ballRadius));
+        update_tiles_after_move(id, oldPos, pos, Size(ballRadius, ballRadius), tileRef);
     }
 }
 
@@ -259,27 +296,27 @@ void update_paddle_by_mouse()
 {
     vec mousePosition{ sf::Mouse::getPosition(g_Globals.window) };
     float screenSizeX = g_Globals.screenSize.x;
-    for (auto& [id, pos, size, paddle] : ecs::View<Position, Size, Paddle>(getEcs()))
+    for (auto& [id, pos, size, tileRef, paddle] : ecs::View<Position, Size, TileReference, Paddle>(getEcs()))
     {
         auto oldPos = pos;
         pos.x = mousePosition.x;
         pos.x = std::max(pos.x, size.x * 0.5f);
         pos.x = std::min(pos.x, screenSizeX - size.x * 0.5f);
-        update_tiles_after_move(id, oldPos, pos, size);
+        update_tiles_after_move(id, oldPos, pos, size, tileRef);
     }
 }
 
 void update_balls_attached_to_paddle()
 {
     auto& ecs = getEcs();
-    for (auto& [id, pos, attach] : ecs::View<Position, AttachedToPaddle>(ecs))
+    for (auto& [id, pos, tileRef, attach] : ecs::View<Position, TileReference, AttachedToPaddle>(ecs))
     {
         auto paddlePos = ecs.getComponent<Position>(attach.paddleId);
         if (!paddlePos)
             continue;
         auto oldPos = pos;
         (vec&)pos = *paddlePos + attach.relativePos;
-        update_tiles_after_move(id, oldPos, pos, Size(ballRadius, ballRadius));
+        update_tiles_after_move(id, oldPos, pos, Size(ballRadius, ballRadius), tileRef);
     }
 }
 
@@ -291,104 +328,82 @@ void update_ball_collisions_tiled()
 
     int tileCountX = get_tile_count_x();
     int tileCountY = get_tile_count_y();
-    for (int y = 0; y < tileCountY; y++)
+    ecs::View<Position, TileReference, Ball> ballView(ecs);
+    for (auto& [ballId, ballPos, ballTileRef, ball] : ballView)
     {
-        for (int x = 0; x < tileCountX; x++)
+        bool leftEdge = false, rightEdge = false, topEdge = false, bottomEdge = false;
+        for (auto [x, y] : ballTileRef.tiles)
         {
-            auto& tile = g_Globals.tiles[y * tileCountX + x];
-            for (auto& ballId : tile.ids)
+            if (x == 0)
+                leftEdge = true;
+            if (x == tileCountX - 1)
+                rightEdge = true;
+            if (y == 0)
+                bottomEdge = true;
+            if (y == tileCountY - 1)
+                topEdge = true;
+        }
+
+        if(leftEdge && ballPos.x - ballRadius < 0)
+        {
+            BallCollision ballCollision;
+            ballCollision.ballId = ballId;
+            ballCollision.otherObjectId = 0;
+            ballCollision.overlap.penetration = -(ballPos.x - ballRadius);
+            ballCollision.overlap.collisionPoint = vec(0, ballPos.y);
+            ballCollision.overlap.normal = vec(1, 0);
+            g_Globals.ballCollisions.push_back(ballCollision);
+        }
+        if(rightEdge && ballPos.x + ballRadius > g_Globals.screenSize.x)
+        {
+            BallCollision ballCollision;
+            ballCollision.ballId = ballId;
+            ballCollision.otherObjectId = 0;
+            ballCollision.overlap.penetration = ballPos.x + ballRadius - g_Globals.screenSize.x;
+            ballCollision.overlap.collisionPoint = vec(g_Globals.screenSize.x, ballPos.y);
+            ballCollision.overlap.normal = vec(-1, 0);
+            g_Globals.ballCollisions.push_back(ballCollision);
+        }
+        if(topEdge && ballPos.y + ballRadius > g_Globals.screenSize.y)
+        {
+            BallCollision ballCollision;
+            ballCollision.ballId = ballId;
+            ballCollision.otherObjectId = 0;
+            ballCollision.overlap.penetration = ballPos.y + ballRadius - g_Globals.screenSize.y;
+            ballCollision.overlap.collisionPoint = vec(ballPos.x, g_Globals.screenSize.y);
+            ballCollision.overlap.normal = vec(0, -1);
+            g_Globals.ballCollisions.push_back(ballCollision);
+        }
+        if(bottomEdge && ballPos.y < 0)
+        {   // Ball dies
+            update_tiles_for_deletion(ballId, ballTileRef);
+            ballView.deleteEntity(ballId);
+            break;
+        }
+
+        for (auto [x, y] : ballTileRef.tiles)
+        {
+            for (auto brickId : g_Globals.tilesBricks[y * tileCountX + x].ids)
             {
-                if (!ecs.hasComponent<Ball>(ballId))
-                    continue;
-
-                auto ballPos = ecs.getComponent<Position>(ballId);
-                if (!ballPos)
-                    continue;   // TODO should only happen if we left a deleted object in the tiles, which we currently do :(
-
-                if (x == tileCountX - 1)
+                auto [brickPos, brickSize, paddle, brick] = ecs.getComponents<Position, Size, Paddle, Brick>(brickId);
+                BallCollision ballCollision;
+                bool overlap = test_circle_aabb_overlap(ballCollision.overlap, ballPos, ballRadius, *brickPos - *brickSize * 0.5f, *brickPos + *brickSize * 0.5f, false);
+                if (overlap)
                 {
-                    if (ballPos->x + ballRadius > g_Globals.screenSize.x)
+                    ballCollision.ballId = ballId;
+                    ballCollision.otherObjectId = brickId;
+                    if (brick)
                     {
-                        BallCollision ballCollision;
-                        ballCollision.ballId = ballId;
-                        ballCollision.otherObjectId = 0;
-                        ballCollision.overlap.penetration = ballPos->x + ballRadius - g_Globals.screenSize.x;
-                        ballCollision.overlap.collisionPoint = vec(g_Globals.screenSize.x, ballPos->y);
-                        ballCollision.overlap.normal = vec(-1, 0);
-                        g_Globals.ballCollisions.push_back(ballCollision);
-                    }
-                }
-                if (y == 0)
-                {
-                    if (ballPos->y < 0)
-                    {   // Ball dies
-                        ecs.deleteEntity(ballId);
-                        continue;
-                    }
-                }
-                if (y == tileCountY - 1)
-                {
-                    if (ballPos->y + ballRadius > g_Globals.screenSize.y)
-                    {
-                        BallCollision ballCollision;
-                        ballCollision.ballId = ballId;
-                        ballCollision.otherObjectId = 0;
-                        ballCollision.overlap.penetration = ballPos->y + ballRadius - g_Globals.screenSize.y;
-                        ballCollision.overlap.collisionPoint = vec(ballPos->x, g_Globals.screenSize.y);
-                        ballCollision.overlap.normal = vec(0, -1);
-                        g_Globals.ballCollisions.push_back(ballCollision);
-                    }
-                }
-
-                for (auto& brickId : tile.ids)
-                {
-                    auto [brickPos, brickSize, brick] = ecs.getComponents<Position, Size, Brick>(brickId);
-                    if (!brick)
-                        continue;
-
-                    BallCollision ballCollision;
-                    bool overlap = test_circle_aabb_overlap(ballCollision.overlap, *ballPos, ballRadius, *brickPos - *brickSize * 0.5f, *brickPos + *brickSize * 0.5f, false);
-                    if (overlap)
-                    {
-                        ballCollision.ballId = ballId;
-                        ballCollision.otherObjectId = brickId;
                         brick->wasHitThisFrame = true;
-                        g_Globals.ballCollisions.push_back(ballCollision);
                     }
-                }
-
-                for (auto& paddleId : tile.ids)
-                {
-                    auto [paddlePos, paddleSize, paddle] = ecs.getComponents<Position, Size, Paddle>(paddleId);
-                    if (!paddle)
-                        continue;
-
-                    BallCollision ballCollision;
-                    bool overlap = test_circle_aabb_overlap(ballCollision.overlap, *ballPos, ballRadius, *paddlePos - *paddleSize * 0.5f, *paddlePos + *paddleSize * 0.5f, false);
-                    if (overlap)
+                    else if (paddle)
                     {
-                        ballCollision.ballId = ballId;
-                        ballCollision.otherObjectId = paddleId;
-                        float toBall = ballPos->x - paddlePos->x;
-                        toBall /= paddleSize->x;
+                        float toBall = ballPos.x - brickPos->x;
+                        toBall /= brickSize->x;
                         ballCollision.overlap.normal.x = lerp(0.0f, 0.9f, toBall);
                         ballCollision.overlap.normal = vec_normalize(ballCollision.overlap.normal);
-                        g_Globals.ballCollisions.push_back(ballCollision);
                     }
-                }
-
-                if (x == 0)
-                {
-                    if (ballPos->x - ballRadius < 0)
-                    {
-                        BallCollision ballCollision;
-                        ballCollision.ballId = ballId;
-                        ballCollision.otherObjectId = 0;
-                        ballCollision.overlap.penetration = -(ballPos->x - ballRadius);
-                        ballCollision.overlap.collisionPoint = vec(0, ballPos->y);
-                        ballCollision.overlap.normal = vec(1, 0);
-                        g_Globals.ballCollisions.push_back(ballCollision);
-                    }
+                    g_Globals.ballCollisions.push_back(ballCollision);
                 }
             }
         }
@@ -437,6 +452,7 @@ void update_ball_collisions()
         else if (ballPos.y < 0)
         {   // Ball dies
             pos_ball.deleteEntity(ballId);
+            break;
         }
 
         for (auto& [brickId, brickPos, brickSize, brick] : ecs::View<Position, Size, Brick>(getEcs()))
@@ -490,8 +506,8 @@ void resolve_ball_collisions()
 void handle_brick_collisions()
 {
     auto& ecs = getEcs();
-    auto brickView = ecs::View<Position, Size, Brick>(ecs);
-    for (auto [brickId, pos, size, brick] : brickView)
+    auto brickView = ecs::View<Position, Size, TileReference, Brick>(ecs);
+    for (auto& [brickId, pos, size, tileRef, brick] : brickView)
     {
         if (brick.wasHitThisFrame)
         {
@@ -499,9 +515,12 @@ void handle_brick_collisions()
             {
                 vec ballPosition = pos - vec(0, size.y + ballRadius);
                 vec ballVelocity = vec(0, -ballStartingSpeed);
-                brickView.createEntity<Position, Velocity, Ball>(Position{ ballPosition }, Velocity{ ballVelocity }, Ball{});
+                auto newBallId = brickView.createEntity<Position, Velocity, TileReference, Ball>(Position{ ballPosition }, Velocity{ ballVelocity }, TileReference{ true }, Ball{});
+                auto tileRef = ecs.getComponent<TileReference>(newBallId);
+                insert_into_tiles(newBallId, Position{ ballPosition }, Size{ ballRadius, ballRadius }, *tileRef);
             }
             brick.wasHitThisFrame = false;
+            update_tiles_for_deletion(brickId, tileRef);
             brickView.deleteEntity(brickId);
         }
     }
@@ -554,9 +573,9 @@ void render_tile_debug()
     {
         for (int x = 0; x < tileCountX; x++)
         {
-            auto& tile = g_Globals.tiles[y * tileCountX + x];
-            auto it = std::find(tile.ids.begin(), tile.ids.end(), ballId);
-            bool includesBall = it != tile.ids.end();
+            auto& tileBall = g_Globals.tilesBalls[y * tileCountX + x];
+            auto it = std::find(tileBall.ids.begin(), tileBall.ids.end(), ballId);
+            bool includesBall = it != tileBall.ids.end();
             vec tileCenter(x * tileSize + tileSize * 0.5f, y * tileSize + tileSize * 0.5f);
             render_rect(tileCenter, vec(tileSize, tileSize) * 0.9f, includesBall ? sf::Color(0, 255, 0, 120) : sf::Color(255, 0, 0, 60));
         }
