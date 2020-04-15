@@ -208,8 +208,8 @@ void setup_level(GameState& gamestate)
     auto tileRef = ecs.getComponent<TileReference>(paddleId);
     insert_into_tiles(paddleId, pos, size, *tileRef);
 
-    int rows = 500;
-    int columns = 500;
+    int rows = 25;
+    int columns = 25;
 
     float brickSpacing = 0;
 
@@ -274,7 +274,7 @@ void fire_ball()
     for (auto& [id, ball, attach, vel] : view)
     {
         (vec&)vel = vec_normalize(vec{ 1,1 }) * ballStartingSpeed;
-        view.deleteComponents(id, ecs::getTypes<AttachedToPaddle>());
+        view.deleteComponents<AttachedToPaddle>(id);
     }
 }
 
@@ -598,7 +598,7 @@ void update()
         update_ball_collisions_tiled();
     }
     resolve_ball_collisions();
-    //handle_brick_collisions();
+    handle_brick_collisions();
 
     if (!has_balls_in_play())
     {
