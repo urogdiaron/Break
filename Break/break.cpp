@@ -309,7 +309,7 @@ void update_paddle_by_mouse()
 void update_balls_attached_to_paddle()
 {
     auto& ecs = getEcs();
-    for (auto& [id, pos, tileRef, attach] : ecs::View<Position, TileReference, AttachedToPaddle>(ecs))
+    for (auto& [id, pos, tileRef, attach] : ecs::View<const Position, TileReference, AttachedToPaddle>(ecs))
     {
         auto paddlePos = ecs.getComponent<Position>(attach.paddleId);
         if (!paddlePos)
@@ -328,8 +328,8 @@ void update_ball_collisions_tiled()
 
     int tileCountX = get_tile_count_x();
     int tileCountY = get_tile_count_y();
-    ecs::View<Position, TileReference, Ball> ballView(ecs);
-    for (auto& [ballId, ballPos, ballTileRef, ball] : ballView)
+    auto ballView = ecs::View<Position, TileReference>(ecs).with<Ball>();
+    for (auto& [ballId, ballPos, ballTileRef] : ballView)
     {
         bool leftEdge = false, rightEdge = false, topEdge = false, bottomEdge = false;
         for (auto [x, y] : ballTileRef.tiles)
@@ -414,8 +414,8 @@ void update_ball_collisions()
 {
     EASY_FUNCTION();
     g_Globals.ballCollisions.clear();
-    ecs::View<Position, Ball> pos_ball(getEcs());
-    for (auto& [ballId, ballPos, ball] : pos_ball)
+    auto pos_ball = ecs::View<Position>(getEcs()).with<Ball>();
+    for (auto& [ballId, ballPos] : pos_ball)
     {
         // Collide with the screen edge
         if (ballPos.x - ballRadius < 0)
@@ -468,7 +468,7 @@ void update_ball_collisions()
             }
         }
 
-        for (auto& [paddleId, paddlePos, paddleSize, paddle] : ecs::View<Position, Size, Paddle>(getEcs()))
+        for (auto& [paddleId, paddlePos, paddleSize] : ecs::View<Position, Size>(getEcs()).with<Paddle>())
         {
             BallCollision ballCollision;
             bool overlap = test_circle_aabb_overlap(ballCollision.overlap, ballPos, ballRadius, paddlePos - paddleSize * 0.5f, paddlePos + paddleSize * 0.5f, false);
@@ -492,7 +492,7 @@ void resolve_ball_collisions()
     auto& ecs = getEcs();
     for (auto& ballCollision : g_Globals.ballCollisions)
     {
-        auto [pos, vel] = ecs.getComponents<Position, Velocity>(ballCollision.ballId);
+        auto [vel] = ecs.getComponents<Velocity>(ballCollision.ballId);
         // this assumes the bricks are not moving!
         // so that their relative velocities are the same as the ball's velocity
         if (vec_dot(*vel, ballCollision.overlap.normal) > 0)
@@ -528,7 +528,7 @@ void handle_brick_collisions()
 
 bool has_balls_in_play()
 {
-    ecs::View<Ball> balls(getEcs());
+    auto balls = ecs::View<>(getEcs()).with<Ball>();
     return balls.getCount() > 0;
 }
 
