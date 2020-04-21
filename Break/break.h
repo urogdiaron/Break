@@ -29,6 +29,7 @@ using entityId = ecs::entityId;
 struct Position : public vec
 {
     using vec::Vector2;
+    using vec::operator=;
 };
 
 struct Size : public vec
@@ -66,6 +67,11 @@ struct Brick
     bool wasHitThisFrame = false;
 };
 
+struct TileReferenceCreator
+{
+    bool isBall = false;
+};
+
 struct TileReference
 {
     TileReference() = default;
@@ -92,6 +98,19 @@ struct Tile
 
 struct Globals
 {
+    inline static float paddleHeight = 25.0f;
+    inline static float ballRadius = 20.0f;
+    inline static float ballStartingSpeed = 400.0f;
+    inline static float tileSize = 50.0f;
+
+    struct Prefabs
+    {
+        ecs::Prefab<Size, Position, Velocity, TileReferenceCreator, AttachedToPaddle, Ball> attachedBall = { Size{ ballRadius * 2, ballRadius * 2 }, TileReferenceCreator{true} };
+        ecs::Prefab<Size, Position, Velocity, TileReferenceCreator, Ball> spawnedBall = { Size{ ballRadius * 2, ballRadius * 2 }, TileReferenceCreator{true} };
+        ecs::Prefab<Position, Size, TileReferenceCreator, Paddle> paddle;
+        ecs::Prefab<Position, Size, TileReferenceCreator, Brick> brick;
+    };
+
     ecs::Ecs ecs;
     GameState gameState;
     vec screenSize{ 800, 600 };
@@ -104,6 +123,10 @@ struct Globals
     std::vector<BallCollision> ballCollisions;
     std::vector<Tile> tilesBalls;
     std::vector<Tile> tilesBricks;
+
+    Prefabs prefabs;
+
+
     float ballRespawnTimer = -1;
     float elapsedTime;
 };
