@@ -228,8 +228,8 @@ void setup_level(GameState& gamestate)
     auto size = Size{ 150.0f, Globals::paddleHeight };
     entityId paddleId = ecs.createEntity(g_Globals.prefabs.paddle, pos, size);
 
-    int rows = 25;
-    int columns = 25;
+    int rows = 0;// 25;
+    int columns = 0;// 25;
 
     float brickSpacing = 0;
 
@@ -603,12 +603,25 @@ void update_ball_magnet()
     for (auto& [paddleId, paddlePos] : ecs::View<const Position>(ecs).with<Paddle>())
     {
         for (auto& [ballId, ballPos, ballVelocity] : ecs::View<const Position, Velocity>(ecs).with<Ball>())
-        {   // for now we pretend that paddles are horizonal
+        {
             vec toPaddle = paddlePos - ballPos;
-            static float dragForceStr = 10.0f;
-            float dragForce = toPaddle.x > 0.0f ? dragForceStr : -dragForceStr;
-            ballVelocity.x += dragForce;
-            (vec&)ballVelocity = vec_normalize(ballVelocity) * Globals::ballStartingSpeed;
+            vec toPaddleDir = vec_normalize(toPaddle);
+            vec ballDir = vec_normalize(ballVelocity);
+            
+            float dot = vec_dot(ballDir, toPaddleDir);
+            bool ccw = vec_ccw(ballDir, toPaddleDir);
+
+            float angle = acosf(clamp(dot, -1.0f, 1.0f));
+            if (!ccw)
+                angle *= -1;
+
+            static float turnRate = 2.0f;
+            float maxAngle = g_Globals.elapsedTime * turnRate;
+            angle = clamp(angle, -maxAngle, maxAngle);
+
+            ballDir = vec_rotate(ballDir, angle);
+
+            (vec&)ballVelocity = ballDir * Globals::ballStartingSpeed;
         }
     }
 }
