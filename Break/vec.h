@@ -1,7 +1,13 @@
 #pragma once
 using vec = sf::Vector2f;
 
-constexpr float clamp(float value, float min, float max)
+bool vec_is_zero(vec v)
+{
+    return v.x == 0 && v.y == 0;
+}
+
+template<class T>
+constexpr T clamp(T value, T min, T max)
 {
     return std::max(std::min(max, value), min);
 }

@@ -1,4 +1,10 @@
 #pragma once
+#define BUILD_WITH_EASY_PROFILER
+#define EASY_OPTION_START_LISTEN_ON_STARTUP 1
+#define EASY_OPTION_LOG_ENABLED 1
+#include "easy/profiler.h"
+
+
 #include <vector>
 #include <unordered_map>
 
@@ -11,11 +17,6 @@
 
 #include "vec.h"
 #include "collision.h"
-
-#define BUILD_WITH_EASY_PROFILER
-#define EASY_OPTION_START_LISTEN_ON_STARTUP 1
-#define EASY_OPTION_LOG_ENABLED 1
-#include "easy/profiler.h"
 
 using int16 = int16_t;
 using int32 = int32_t;
@@ -64,7 +65,10 @@ struct Brick
         Ballspawner
     };
     Type type = Type::Simple;
-    bool wasHitThisFrame = false;
+};
+
+struct CollidedWithBall
+{
 };
 
 struct TileReferenceCreator
@@ -80,6 +84,10 @@ struct TileReference
     bool isBall = false;
 };
 
+struct Visible
+{
+};
+
 struct GameState
 {
 };
@@ -89,6 +97,10 @@ struct BallCollision
     OverlapResult overlap;
     entityId ballId;
     entityId otherObjectId;
+};
+
+struct Camera
+{
 };
 
 struct Tile
@@ -109,6 +121,7 @@ struct Globals
         ecs::Prefab<Size, Position, Velocity, TileReferenceCreator, Ball> spawnedBall = { Size{ ballRadius * 2, ballRadius * 2 }, TileReferenceCreator{true} };
         ecs::Prefab<Position, Size, TileReferenceCreator, Paddle> paddle;
         ecs::Prefab<Position, Size, TileReferenceCreator, Brick> brick;
+        ecs::Prefab<Position, Size, Camera> camera;
     };
 
     ecs::Ecs ecs;
@@ -126,6 +139,7 @@ struct Globals
 
     Prefabs prefabs;
 
+    entityId camera;
 
     float ballRespawnTimer = -1;
     float elapsedTime;

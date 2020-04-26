@@ -83,7 +83,10 @@ void init_globals()
     ecs.registerType<Paddle>("Paddle");
     ecs.registerType<AttachedToPaddle>("AttachedToPaddle");
     ecs.registerType<Ball>("Ball");
-    ecs.registerType<Brick>("Brick");      
+    ecs.registerType<Brick>("Brick");
+    ecs.registerType<CollidedWithBall>("CollidedWithBall");
+    ecs.registerType<Camera>("Camera");
+    ecs.registerType<Visible>("Visible");
 
     init_tiles();
 }
@@ -208,9 +211,10 @@ void update_tiles_for_deletion(ecs::entityId id, const TileReference& tileRef)
 
 void create_tile_references_for_new_entities()
 {
+    EASY_FUNCTION();
     auto& ecs = getEcs();
     auto v = ecs::View<Position, Size, TileReferenceCreator>(ecs).with<>();
-    for (auto& [id, pos, size, tileReferenceCreator] : v)
+    for (auto& [it, id, pos, size, tileReferenceCreator] : v)
     {
         TileReference tileRef{ tileReferenceCreator.isBall };
         insert_into_tiles(id, pos, size, tileRef);
@@ -228,8 +232,8 @@ void setup_level(GameState& gamestate)
     auto size = Size{ 150.0f, Globals::paddleHeight };
     entityId paddleId = ecs.createEntity(g_Globals.prefabs.paddle, pos, size);
 
-    int rows = 0;// 25;
-    int columns = 0;// 25;
+    int rows = 25;
+    int columns = 25;
 
     float brickSpacing = 0;
 
@@ -259,6 +263,8 @@ void setup_level(GameState& gamestate)
         currentBrickPos.x = originalBrickPosition.x;
         currentBrickPos.y -= brickSize.y + brickSpacing;
     }
+
+    g_Globals.camera = ecs.createEntity(g_Globals.prefabs.camera, Position{ g_Globals.screenSize * 0.5f }, Size{ g_Globals.screenSize });
 }
 
 void spawn_ball_on_paddle()
@@ -269,7 +275,7 @@ void spawn_ball_on_paddle()
     if (itPaddle == paddleView.end())
         return;
 
-    auto& [paddleId, pos, size, paddle] = *itPaddle;
+    auto& [it, paddleId, pos, size, paddle] = *itPaddle;
     vec ballPosition = pos + vec(0.0f, size.y * 0.5f + Globals::ballRadius);
 
     ecs::entityId ballId = ecs.createEntity(g_Globals.prefabs.attachedBall,
@@ -281,7 +287,7 @@ void spawn_ball_on_paddle()
 void fire_ball()
 {
     auto view = ecs::View<Velocity>(getEcs()).with<Ball, AttachedToPaddle>();
-    for (auto& [id, vel] : view)
+    for (auto& [it, id, vel] : view)
     {
         (vec&)vel = vec_normalize(vec{ 1,1 }) * Globals::ballStartingSpeed;
         view.deleteComponents<AttachedToPaddle>(id);
@@ -290,8 +296,9 @@ void fire_ball()
 
 void update_positions_by_velocities()
 {
+    EASY_FUNCTION();
     float dt = g_Globals.elapsedTime;
-    for (auto& [id, pos, vel, tileRef] : ecs::View<Position, Velocity, TileReference>(getEcs()))
+    for (auto& [it, id, pos, vel, tileRef] : ecs::View<Position, Velocity, TileReference>(getEcs()))
     {
         if (vel.x == 0.0f && vel.y == 0.0)
             continue;
@@ -304,9 +311,10 @@ void update_positions_by_velocities()
 
 void update_paddle_by_mouse()
 {
+    EASY_FUNCTION();
     vec mousePosition{ sf::Mouse::getPosition(g_Globals.window) };
     float screenSizeX = g_Globals.screenSize.x;
-    for (auto& [id, pos, size, tileRef] : ecs::View<Position, Size, TileReference>(getEcs()).with<Paddle>())
+    for (auto& [it, id, pos, size, tileRef] : ecs::View<Position, Size, TileReference>(getEcs()).with<Paddle>())
     {
         auto oldPos = pos;
         pos.x = mousePosition.x;
@@ -318,8 +326,9 @@ void update_paddle_by_mouse()
 
 void update_balls_attached_to_paddle()
 {
+    EASY_FUNCTION();
     auto& ecs = getEcs();
-    for (auto& [id, pos, tileRef, attach] : ecs::View<Position, TileReference, const AttachedToPaddle>(ecs))
+    for (auto& [it, id, pos, tileRef, attach] : ecs::View<Position, TileReference, const AttachedToPaddle>(ecs))
     {
         auto paddlePos = ecs.getComponent<Position>(attach.paddleId);
         if (!paddlePos)
@@ -339,7 +348,7 @@ void update_ball_collisions_tiled()
     int tileCountX = get_tile_count_x();
     int tileCountY = get_tile_count_y();
     auto ballView = ecs::View<Position, TileReference>(ecs).with<Ball>();
-    for (auto& [ballId, ballPos, ballTileRef] : ballView)
+    for (auto& [it, ballId, ballPos, ballTileRef] : ballView)
     {
         bool leftEdge = false, rightEdge = false, topEdge = false, bottomEdge = false;
         for (auto [x, y] : ballTileRef.tiles)
@@ -404,7 +413,7 @@ void update_ball_collisions_tiled()
                     ballCollision.otherObjectId = brickId;
                     if (brick)
                     {
-                        brick->wasHitThisFrame = true;
+                        ballView.addComponent<CollidedWithBall>(brickId);
                     }
                     else if (paddle)
                     {
@@ -420,85 +429,9 @@ void update_ball_collisions_tiled()
     }
 }
 
-void update_ball_collisions()
-{
-    EASY_FUNCTION();
-    g_Globals.ballCollisions.clear();
-    auto pos_ball = ecs::View<Position>(getEcs()).with<Ball>();
-    for (auto& [ballId, ballPos] : pos_ball)
-    {
-        // Collide with the screen edge
-        if (ballPos.x - Globals::ballRadius < 0)
-        {
-            BallCollision ballCollision;
-            ballCollision.ballId = ballId;
-            ballCollision.otherObjectId = 0;
-            ballCollision.overlap.penetration = -(ballPos.x - Globals::ballRadius);
-            ballCollision.overlap.collisionPoint = vec(0, ballPos.y);
-            ballCollision.overlap.normal = vec(1, 0);
-            g_Globals.ballCollisions.push_back(ballCollision);
-        }
-        else if (ballPos.x + Globals::ballRadius > g_Globals.screenSize.x)
-        {
-            BallCollision ballCollision;
-            ballCollision.ballId = ballId;
-            ballCollision.otherObjectId = 0;
-            ballCollision.overlap.penetration = ballPos.x + Globals::ballRadius - g_Globals.screenSize.x;
-            ballCollision.overlap.collisionPoint = vec(g_Globals.screenSize.x, ballPos.y);
-            ballCollision.overlap.normal = vec(-1, 0);
-            g_Globals.ballCollisions.push_back(ballCollision);
-        }
-
-        if (ballPos.y + Globals::ballRadius > g_Globals.screenSize.y)
-        {
-            BallCollision ballCollision;
-            ballCollision.ballId = ballId;
-            ballCollision.otherObjectId = 0;
-            ballCollision.overlap.penetration = ballPos.y + Globals::ballRadius - g_Globals.screenSize.y;
-            ballCollision.overlap.collisionPoint = vec(ballPos.x, g_Globals.screenSize.y);
-            ballCollision.overlap.normal = vec(0, -1);
-            g_Globals.ballCollisions.push_back(ballCollision);
-        }
-        else if (ballPos.y < 0)
-        {   // Ball dies
-            pos_ball.deleteEntity(ballId);
-            break;
-        }
-
-        for (auto& [brickId, brickPos, brickSize, brick] : ecs::View<Position, Size, Brick>(getEcs()))
-        {
-            BallCollision ballCollision;
-            bool overlap = test_circle_aabb_overlap(ballCollision.overlap, ballPos, Globals::ballRadius, brickPos - brickSize * 0.5f, brickPos + brickSize * 0.5f, false);
-            if (overlap)
-            {
-                ballCollision.ballId = ballId;
-                ballCollision.otherObjectId = brickId;
-                brick.wasHitThisFrame = true;
-                g_Globals.ballCollisions.push_back(ballCollision);
-            }
-        }
-
-        for (auto& [paddleId, paddlePos, paddleSize] : ecs::View<Position, Size>(getEcs()).with<Paddle>())
-        {
-            BallCollision ballCollision;
-            bool overlap = test_circle_aabb_overlap(ballCollision.overlap, ballPos, Globals::ballRadius, paddlePos - paddleSize * 0.5f, paddlePos + paddleSize * 0.5f, false);
-            if (overlap)
-            {
-                ballCollision.ballId = ballId;
-                ballCollision.otherObjectId = paddleId;
-                float toBall = ballPos.x - paddlePos.x;
-                toBall /= paddleSize.x;
-                ballCollision.overlap.normal.x = lerp(0.0f, 0.9f, toBall);
-                ballCollision.overlap.normal = vec_normalize(ballCollision.overlap.normal);
-
-                g_Globals.ballCollisions.push_back(ballCollision);
-            }
-        }
-    }
-}
-
 void resolve_ball_collisions()
 {
+    EASY_FUNCTION();
     auto& ecs = getEcs();
     for (auto& ballCollision : g_Globals.ballCollisions)
     {
@@ -517,22 +450,19 @@ void resolve_ball_collisions()
 
 void handle_brick_collisions()
 {
+    EASY_FUNCTION();
     auto& ecs = getEcs();
     auto brickView = ecs::View<Position, Size, TileReference, Brick>(ecs);
-    for (auto& [brickId, pos, size, tileRef, brick] : brickView)
+    for (auto& [it, brickId, pos, size, tileRef, brick] : brickView.with<CollidedWithBall>())
     {
-        if (brick.wasHitThisFrame)
+        if (brick.type == Brick::Type::Ballspawner)
         {
-            if (brick.type == Brick::Type::Ballspawner)
-            {
-                vec ballPosition = pos - vec(0, size.y + Globals::ballRadius);
-                vec ballVelocity = vec(0, -Globals::ballStartingSpeed);
-                auto newBallId = brickView.createEntity(g_Globals.prefabs.spawnedBall, Position{ ballPosition }, Velocity{ ballVelocity });
-            }
-            brick.wasHitThisFrame = false;
-            update_tiles_for_deletion(brickId, tileRef);
-            brickView.deleteEntity(brickId);
+            vec ballPosition = pos - vec(0, size.y + Globals::ballRadius);
+            vec ballVelocity = vec(0, -Globals::ballStartingSpeed);
+            auto newBallId = brickView.createEntity(g_Globals.prefabs.spawnedBall, Position{ ballPosition }, Velocity{ ballVelocity });
         }
+        update_tiles_for_deletion(brickId, tileRef);
+        brickView.deleteEntity(brickId);
     }
 }
 
@@ -542,18 +472,58 @@ bool has_balls_in_play()
     return balls.getCount() > 0;
 }
 
+void update_visibility()
+{
+    EASY_FUNCTION();
+    auto [cameraPos, cameraSize] = getEcs().getComponents<Position, Size>(g_Globals.camera);
+    vec cameraMin = *cameraPos - *cameraSize * 0.5f;
+    vec cameraMax = *cameraPos + *cameraSize * 0.5f;
+
+    auto fnIsVisible = [cameraMin, cameraMax](const vec& objectMin, const vec& objectMax) -> bool
+    {
+        bool outside = 
+            objectMin.x > cameraMax.x ||
+            objectMin.y > cameraMax.y ||
+            objectMax.x < cameraMin.x ||
+            objectMax.y < cameraMin.y;
+
+        return !outside;
+    };
+
+    auto v = ecs::View<const Position, const Size>(getEcs());
+    for (auto& [it, id, pos, size] : v)
+    {
+        vec objectMin = pos - size * 0.5f;
+        vec objectMax = pos + size * 0.5f;
+
+        if (it.hasComponents<Visible>())
+        {
+            if(!fnIsVisible(objectMin, objectMax))
+                v.deleteComponents<Visible>(id);
+        }
+        else
+        {
+            if (fnIsVisible(objectMin, objectMax))
+            {
+                v.addComponent<Visible>(id, Visible{});
+            }
+        }
+    }
+
+}
+
 void render_paddle()
 {
-    for (auto& [id, pos, size, paddle] : ecs::View<Position, Size, Paddle>(getEcs()))
+    for (auto& [it, id, pos, size, paddle] : ecs::View<Position, Size, Paddle>(getEcs()).with<Visible>())
     {
-        render_rect(pos, size, sf::Color(50, 50, 200));
+        render_rect(pos, size, sf::Color(50, 50, 200)); 
     }
 
 }
 
 void render_balls()
 {
-    for (auto& [id, pos, ball] : ecs::View<Position, Ball>(getEcs()))
+    for (auto& [it, id, pos, ball] : ecs::View<Position, Ball>(getEcs()).with<Visible>())
     {
         render_circle(pos, Globals::ballRadius, sf::Color(100, 100, 100));
     }
@@ -561,7 +531,7 @@ void render_balls()
 
 void render_bricks()
 {
-    for (auto& [id, pos, size, brick] : ecs::View<Position, Size, Brick>(getEcs()))
+    for (auto& [it, id, pos, size, brick] : ecs::View<Position, Size, Brick>(getEcs()).with<Visible>())
     {
         render_rect(pos, size, brick.type == Brick::Type::Simple ? sf::Color::Magenta : sf::Color::Yellow);
     }
@@ -571,7 +541,7 @@ void render_tile_debug()
 {
     ecs::entityId ballId = 0;
     auto& ecs = getEcs();
-    for (auto& [id, ball] : ecs::View<Ball>(ecs))
+    for (auto& [it, id, ball] : ecs::View<Ball>(ecs))
     {
         ballId = id;
         break;
@@ -594,15 +564,16 @@ void render_tile_debug()
 
 void update_ball_magnet()
 {
+    EASY_FUNCTION();
     if (!sf::Mouse::isButtonPressed(sf::Mouse::Button::Right))
     {
         return;
     }
 
     auto& ecs = getEcs();
-    for (auto& [paddleId, paddlePos] : ecs::View<const Position>(ecs).with<Paddle>())
+    for (auto& [it, paddleId, paddlePos] : ecs::View<const Position>(ecs).with<Paddle>())
     {
-        for (auto& [ballId, ballPos, ballVelocity] : ecs::View<const Position, Velocity>(ecs).with<Ball>())
+        for (auto& [it, ballId, ballPos, ballVelocity] : ecs::View<const Position, Velocity>(ecs).with<Ball>())
         {
             vec toPaddle = paddlePos - ballPos;
             vec toPaddleDir = vec_normalize(toPaddle);
@@ -628,7 +599,8 @@ void update_ball_magnet()
 
 void fix_up_horizontal_ball_velocities()
 {
-    for (auto& [ballId, ballVelocity] : ecs::View<Velocity>(getEcs()).with<Ball>())
+    EASY_FUNCTION();
+    for (auto& [it, ballId, ballVelocity] : ecs::View<Velocity>(getEcs()).with<Ball>())
     {
         if (fabsf(ballVelocity.y) < 15)
         {
@@ -640,27 +612,9 @@ void fix_up_horizontal_ball_velocities()
     }
 }
 
-void update()
+void update_ball_respawns()
 {
     EASY_FUNCTION();
-    create_tile_references_for_new_entities();
-    update_paddle_by_mouse();
-    update_balls_attached_to_paddle();
-    update_ball_magnet();
-    fix_up_horizontal_ball_velocities();
-
-    update_positions_by_velocities();
-    if (sf::Keyboard::isKeyPressed(sf::Keyboard::Space))
-    {
-        update_ball_collisions();
-    }
-    else
-    {
-        update_ball_collisions_tiled();
-    }
-    resolve_ball_collisions();
-    handle_brick_collisions();
-
     if (!has_balls_in_play())
     {
         if (g_Globals.ballRespawnTimer < 0)
@@ -679,37 +633,46 @@ void update()
     }
 }
 
-#if 0
-void update()
-{
-    vec mousePosition{sf::Mouse::getPosition(g_Globals.window)};
-    mousePosition.y = g_Globals.screenSize.y - mousePosition.y;
-    update_paddle(&g_Globals.gameState.paddle, mousePosition);
-    if (g_debugBall)
-    {
-        update_ball_debug(&g_Globals.gameState.balls[0], mousePosition);
-    }
-    else
-    {
-        for(auto& it: g_Globals.gameState.balls)
-        {
-            update_ball(it.second);
-        }
-    }
-
-	deleteEntitiesFromMemory();
-}
-
-
-#endif
-
-void render()
+void update_camera_move()
 {
     EASY_FUNCTION();
-    render_paddle();
-    render_balls();
-    render_bricks();
-    render_tile_debug();
+    vec cameraMove;
+    if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::W)) cameraMove.y -= 1.0f;
+    if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::S)) cameraMove.y += 1.0f;
+    if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::D)) cameraMove.x += 1.0f;
+    if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::A)) cameraMove.x -= 1.0f;
+
+    if (!vec_is_zero(cameraMove))
+    {
+        static float cameraMoveSpeed = 300.0f;
+        Position* cameraPos = getEcs().getComponent<Position>(g_Globals.camera);
+        (vec&)*cameraPos += cameraMove * (cameraMoveSpeed * g_Globals.elapsedTime);
+    }
+}
+
+void update()
+{
+    EASY_FUNCTION();
+    create_tile_references_for_new_entities();
+    update_paddle_by_mouse();
+    update_balls_attached_to_paddle();
+    update_ball_magnet();
+    fix_up_horizontal_ball_velocities();
+
+    update_positions_by_velocities();
+    update_ball_collisions_tiled();
+    resolve_ball_collisions();
+    handle_brick_collisions();
+
+    update_ball_respawns();
+    update_camera_move();
+}
+
+void setViewFromCamera()
+{
+    auto& ecs = getEcs();
+    auto [cameraPos, cameraSize] = ecs.getComponents<Position, Size>(g_Globals.camera);
+    g_Globals.window.setView(sf::View(sf::FloatRect(*cameraPos - (*cameraSize) * 0.5f, *cameraSize)));
 }
 
 sf::Text text;
@@ -717,6 +680,8 @@ sf::Font font;
 
 void render_stats()
 {
+    g_Globals.window.setView(sf::View(sf::FloatRect(vec(0.0f, 0.0f), g_Globals.screenSize)));
+
     EASY_FUNCTION();
     char debugString[1024];
     sprintf_s(debugString, "Frame time: %0.2f ms", g_Globals.elapsedTime * 1000.0f);
@@ -725,6 +690,18 @@ void render_stats()
     text.setFillColor(sf::Color::Green);
     text.setString(debugString);
     g_Globals.window.draw(text);
+}
+
+void render()
+{
+    EASY_FUNCTION();
+    setViewFromCamera();
+    update_visibility();
+    render_paddle();
+    render_balls();
+    render_bricks();
+    //render_tile_debug();
+    render_stats();
 }
 
 int main()
@@ -741,6 +718,7 @@ int main()
 
     auto& window = g_Globals.window;
     window.setMouseCursorVisible(false);
+    window.setMouseCursorGrabbed(true);
 
     spawn_ball_on_paddle();
 
@@ -770,7 +748,6 @@ int main()
                     g_debugBall = !g_debugBall;
                     break;
                 }
-
             }
             if (event.type == sf::Event::MouseButtonPressed)
             {
@@ -786,7 +763,6 @@ int main()
 
         update();
         render();
-        render_stats();
 
         {
             EASY_BLOCK("Display");
