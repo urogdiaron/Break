@@ -103,13 +103,20 @@ void insert_into_tiles(ecs::entityId id, const Position& pos, const Size& size, 
     int lastTileY = (int)(max.y / Globals::tileSize);
 
     int tileCountX = get_tile_count_x();
+    int tileCountY = get_tile_count_y();
 
     auto& tiles = tileRef.isBall ? g_Globals.tilesBalls : g_Globals.tilesBricks;
 
     for (int y = firstTileY; y <= lastTileY; y++)
     {
+        if (y < 0 || y >= tileCountY)
+            continue;
+
         for (int x = firstTileX; x <= lastTileX; x++)
         {
+            if (x < 0 || x >= tileCountX)
+                continue;
+
             tiles[y * tileCountX + x].ids.push_back(id);
             tileRef.tiles.push_back(std::make_pair(x, y));
         }
