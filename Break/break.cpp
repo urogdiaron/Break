@@ -1,4 +1,6 @@
 #include "break.h"
+#include <iostream>
+#include <fstream>
 
 Globals g_Globals;
 
@@ -64,16 +66,8 @@ void init_tiles()
     g_Globals.tilesBricks.resize(tileCountX * tileCountY);
 }
 
-void init_globals()
+void register_types()
 {
-    //g_Globals.gameState  paddle.position.y = Globals::paddleHeight * 0.5f;
-    g_Globals.rectPrototype.setSize(vec{ 1.0f, 1.0f });
-    g_Globals.rectPrototype.setOrigin(vec{0.5f, 0.5f});
-    g_Globals.rectPrototype.setFillColor(sf::Color::White);
-
-    g_Globals.circlePrototype.setRadius(1.0f);
-    g_Globals.circlePrototype.setFillColor(sf::Color(100, 100, 100));
-
     auto& ecs = getEcs();
     ecs.registerType<Position>("Position");
     ecs.registerType<Size>("Size");
@@ -87,7 +81,19 @@ void init_globals()
     ecs.registerType<CollidedWithBall>("CollidedWithBall");
     ecs.registerType<Camera>("Camera");
     ecs.registerType<Visible>("Visible");
+}
 
+void init_globals()
+{
+    //g_Globals.gameState  paddle.position.y = Globals::paddleHeight * 0.5f;
+    g_Globals.rectPrototype.setSize(vec{ 1.0f, 1.0f });
+    g_Globals.rectPrototype.setOrigin(vec{0.5f, 0.5f});
+    g_Globals.rectPrototype.setFillColor(sf::Color::White);
+
+    g_Globals.circlePrototype.setRadius(1.0f);
+    g_Globals.circlePrototype.setFillColor(sf::Color(100, 100, 100));
+
+    register_types();
     init_tiles();
 }
 
@@ -220,13 +226,13 @@ void create_tile_references_for_new_entities()
 {
     EASY_FUNCTION();
     auto& ecs = getEcs();
-    auto v = ecs::View<Position, Size, TileReferenceCreator>(ecs).with<>();
+    auto v = ecs::View<Position, Size, TileReferenceCreator>(ecs);
     for (auto& [it, id, pos, size, tileReferenceCreator] : v)
     {
         TileReference tileRef{ tileReferenceCreator.isBall };
         insert_into_tiles(id, pos, size, tileRef);
-        v.addComponent<TileReference>(id, tileRef);
         v.deleteComponents<TileReferenceCreator>(id);
+        v.addComponent<TileReference>(id, tileRef);
     }
 }
 
@@ -512,7 +518,7 @@ void update_visibility()
         {
             if (fnIsVisible(objectMin, objectMax))
             {
-                v.addComponent<Visible>(id, Visible{});
+                v.addComponent<Visible>(id);
             }
         }
     }
@@ -711,6 +717,32 @@ void render()
     render_stats();
 }
 
+void save_ecs()
+{
+    std::ofstream stream("saved_scene.brk", std::ios::out | std::ios::binary);
+    g_Globals.ecs.save(stream);
+    stream.write((const char*)&g_Globals.camera, sizeof(g_Globals.camera));
+    stream.close();
+}
+
+void load_ecs()
+{
+    std::ifstream stream;
+    stream.open("saved_scene.brk", std::ios::binary);
+    g_Globals.ecs.load(stream);
+    stream.read((char*)&g_Globals.camera, sizeof(g_Globals.camera));
+    stream.close();
+
+    g_Globals.ballRespawnTimer = -1.0f;
+    g_Globals.ballCollisions.clear();
+    init_tiles();
+
+    for (auto& [it, id, pos, size, tileRef] : ecs::View<Position, Size, TileReference>(getEcs()))
+    {
+        insert_into_tiles(id, pos, size, tileRef);
+    }
+}
+
 int main()
 {
     EASY_PROFILER_ENABLE;
@@ -754,6 +786,12 @@ int main()
                 case sf::Keyboard::D:
                     g_debugBall = !g_debugBall;
                     break;
+                case sf::Keyboard::F5:
+                    save_ecs();
+                    break;
+                case sf::Keyboard::F6:
+                    load_ecs();
+                    break;
                 }
             }
             if (event.type == sf::Event::MouseButtonPressed)
@@ -779,4 +817,16 @@ int main()
     }
 
     return 0;
+}
+
+void TileReference::save(std::ostream& stream) const
+{
+    stream.write((const char*)&isBall, sizeof(isBall));
+    ecs::saveVector(stream, tiles);
+}
+
+void TileReference::load(std::istream& stream)
+{
+    stream.read((char*)&isBall, sizeof(isBall));
+    ecs::loadVector(stream, tiles);
 }
