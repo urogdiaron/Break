@@ -82,8 +82,6 @@ struct TileReference
     TileReference(bool isBall) : isBall(isBall) {}
     std::vector<std::pair<int, int>> tiles;
     bool isBall = false;
-    void save(std::ostream& stream) const;
-    void load(std::istream& stream);
 };
 
 struct Visible
@@ -140,6 +138,7 @@ struct Globals
     std::vector<Tile> tilesBricks;
 
     Prefabs prefabs;
+    std::unordered_map<std::string, sf::Texture> textures;
 
     entityId camera;
 

@@ -73,14 +73,35 @@ void register_types()
     ecs.registerType<Size>("Size");
     ecs.registerType<Velocity>("Velocity");
     ecs.registerType<TileReferenceCreator>("TileReferenceCreator");
-    ecs.registerType<TileReference>("TileReference");
+    ecs.registerType<TileReference>("TileReference", ecs::ComponentType::State);
     ecs.registerType<Paddle>("Paddle");
     ecs.registerType<AttachedToPaddle>("AttachedToPaddle");
     ecs.registerType<Ball>("Ball");
     ecs.registerType<Brick>("Brick");
     ecs.registerType<CollidedWithBall>("CollidedWithBall");
     ecs.registerType<Camera>("Camera");
-    ecs.registerType<Visible>("Visible");
+    ecs.registerType<Visible>("Visible", ecs::ComponentType::DontSave);
+}
+
+bool loadTexture(const char* fileName)
+{
+    sf::Texture texture;
+    bool success = texture.loadFromFile(fileName);
+    if (!success)
+        return false;
+
+    g_Globals.textures[fileName] = texture;
+    return true;
+}
+
+bool loadTextures()
+{
+    sf::Texture texture;
+    bool success = true;
+    success = success && loadTexture("brick.png");
+    success = success && loadTexture("paddle.png");
+    success = success && loadTexture("ball.png");
+    return success;
 }
 
 void init_globals()
@@ -94,6 +115,7 @@ void init_globals()
     g_Globals.circlePrototype.setFillColor(sf::Color(100, 100, 100));
 
     register_types();
+    loadTextures();
     init_tiles();
 }
 
@@ -226,13 +248,24 @@ void create_tile_references_for_new_entities()
 {
     EASY_FUNCTION();
     auto& ecs = getEcs();
-    auto v = ecs::View<Position, Size, TileReferenceCreator>(ecs);
+    auto v = ecs::View<Position, Size, TileReferenceCreator>(ecs).exclude<TileReference>();
     for (auto& [it, id, pos, size, tileReferenceCreator] : v)
     {
         TileReference tileRef{ tileReferenceCreator.isBall };
         insert_into_tiles(id, pos, size, tileRef);
-        v.deleteComponents<TileReferenceCreator>(id);
         v.addComponent<TileReference>(id, tileRef);
+    }
+}
+
+void clear_tile_references_for_deleted_entities()
+{
+    EASY_FUNCTION();
+    auto& ecs = getEcs();
+    auto v = ecs::View<TileReference>(ecs).exclude<TileReferenceCreator>();
+    for (auto& [it, id, tileReference] : v)
+    {
+        update_tiles_for_deletion(id, tileReference);
+        v.deleteComponents<TileReference>(id);
     }
 }
 
@@ -311,7 +344,7 @@ void update_positions_by_velocities()
 {
     EASY_FUNCTION();
     float dt = g_Globals.elapsedTime;
-    for (auto& [it, id, pos, vel, tileRef] : ecs::View<Position, Velocity, TileReference>(getEcs()))
+    for (auto& [it, id, pos, vel, tileRef] : ecs::View<Position, Velocity, TileReference>(getEcs()).exclude<AttachedToPaddle>())
     {
         if (vel.x == 0.0f && vel.y == 0.0)
             continue;
@@ -376,6 +409,12 @@ void update_ball_collisions_tiled()
                 topEdge = true;
         }
 
+        if (bottomEdge && ballPos.y < 0)
+        {   // Ball dies
+            ballView.deleteEntity(ballId);
+            break;
+        }
+
         if(leftEdge && ballPos.x - Globals::ballRadius < 0)
         {
             BallCollision ballCollision;
@@ -405,12 +444,6 @@ void update_ball_collisions_tiled()
             ballCollision.overlap.collisionPoint = vec(ballPos.x, g_Globals.screenSize.y);
             ballCollision.overlap.normal = vec(0, -1);
             g_Globals.ballCollisions.push_back(ballCollision);
-        }
-        if(bottomEdge && ballPos.y < 0)
-        {   // Ball dies
-            update_tiles_for_deletion(ballId, ballTileRef);
-            ballView.deleteEntity(ballId);
-            break;
         }
 
         for (auto [x, y] : ballTileRef.tiles)
@@ -474,7 +507,6 @@ void handle_brick_collisions()
             vec ballVelocity = vec(0, -Globals::ballStartingSpeed);
             auto newBallId = brickView.createEntity(g_Globals.prefabs.spawnedBall, Position{ ballPosition }, Velocity{ ballVelocity });
         }
-        update_tiles_for_deletion(brickId, tileRef);
         brickView.deleteEntity(brickId);
     }
 }
@@ -527,26 +559,65 @@ void update_visibility()
 
 void render_paddle()
 {
+    sf::Sprite sprite;
+    sprite.setTexture(g_Globals.textures["paddle.png"]);
+    auto textureSize = sprite.getTexture()->getSize();
+    sprite.setOrigin(textureSize.x * 0.5f, textureSize.y * 0.5f);
+    vec sizeCorrection = vec(1.0f / textureSize.x, 1.0f / textureSize.y);
+
     for (auto& [it, id, pos, size, paddle] : ecs::View<Position, Size, Paddle>(getEcs()).with<Visible>())
     {
-        render_rect(pos, size, sf::Color(50, 50, 200)); 
+        vec center = pos;
+        vec scale = vec(size.x * sizeCorrection.x, size.y * sizeCorrection.y);
+        center.y = g_Globals.screenSize.y - center.y;
+        sprite.setPosition(center);
+        sprite.setScale(scale);
+        //sprite.setColor(sf::Color(50, 50, 200, 255));
+        g_Globals.window.draw(sprite);
+
+        //render_rect(pos, size, sf::Color(50, 50, 200)); 
     }
 
 }
 
 void render_balls()
 {
+    sf::Sprite sprite;
+    sprite.setTexture(g_Globals.textures["ball.png"]);
+    auto textureSize = sprite.getTexture()->getSize();
+    sprite.setOrigin(textureSize.x * 0.5f, textureSize.y * 0.5f);
+    vec scale = vec(g_Globals.ballRadius * 2 / textureSize.x, g_Globals.ballRadius * 2 / textureSize.y);
+    sprite.setScale(scale);
+
     for (auto& [it, id, pos, ball] : ecs::View<Position, Ball>(getEcs()).with<Visible>())
     {
-        render_circle(pos, Globals::ballRadius, sf::Color(100, 100, 100));
+        vec center = pos;
+        center.y = g_Globals.screenSize.y - center.y;
+        sprite.setPosition(center);
+        g_Globals.window.draw(sprite);
+        //render_circle(pos, Globals::ballRadius, sf::Color(100, 100, 100));
     }
 }
 
 void render_bricks()
 {
+    sf::Sprite sprite;
+    sprite.setTexture(g_Globals.textures["brick.png"]);
+    auto textureSize = sprite.getTexture()->getSize();
+    sprite.setOrigin(textureSize.x * 0.5f, textureSize.y * 0.5f);
+    vec sizeCorrection = vec(1.0f / textureSize.x, 1.0f / textureSize.y);
     for (auto& [it, id, pos, size, brick] : ecs::View<Position, Size, Brick>(getEcs()).with<Visible>())
     {
-        render_rect(pos, size, brick.type == Brick::Type::Simple ? sf::Color::Magenta : sf::Color::Yellow);
+        vec center = pos;
+        vec scale = vec(size.x * sizeCorrection.x, size.y * sizeCorrection.y);
+        center.y = g_Globals.screenSize.y - center.y;
+        sprite.setPosition(center);
+        sprite.setScale(scale);
+        sprite.setColor(brick.type == Brick::Type::Simple ? sf::Color::Magenta : sf::Color::Yellow);
+        g_Globals.window.draw(sprite);
+
+
+        //render_rect(pos, size, brick.type == Brick::Type::Simple ? sf::Color::Magenta : sf::Color::Yellow);
     }
 }
 
@@ -679,6 +750,8 @@ void update()
 
     update_ball_respawns();
     update_camera_move();
+
+    clear_tile_references_for_deleted_entities();
 }
 
 void setViewFromCamera()
@@ -736,11 +809,6 @@ void load_ecs()
     g_Globals.ballRespawnTimer = -1.0f;
     g_Globals.ballCollisions.clear();
     init_tiles();
-
-    for (auto& [it, id, pos, size, tileRef] : ecs::View<Position, Size, TileReference>(getEcs()))
-    {
-        insert_into_tiles(id, pos, size, tileRef);
-    }
 }
 
 int main()
@@ -819,14 +887,14 @@ int main()
     return 0;
 }
 
-void TileReference::save(std::ostream& stream) const
-{
-    stream.write((const char*)&isBall, sizeof(isBall));
-    ecs::saveVector(stream, tiles);
-}
-
-void TileReference::load(std::istream& stream)
-{
-    stream.read((char*)&isBall, sizeof(isBall));
-    ecs::loadVector(stream, tiles);
-}
+//void TileReference::save(std::ostream& stream) const
+//{
+//    stream.write((const char*)&isBall, sizeof(isBall));
+//    ecs::saveVector(stream, tiles);
+//}
+//
+//void TileReference::load(std::istream& stream)
+//{
+//    stream.read((char*)&isBall, sizeof(isBall));
+//    ecs::loadVector(stream, tiles);
+//}
