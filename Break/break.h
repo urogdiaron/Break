@@ -103,6 +103,16 @@ struct Camera
 {
 };
 
+struct Particle 
+{
+    float timeToLive = 1.0f;
+};
+
+struct ParticleEmitter
+{
+    float timeUntilNextEmit = 0.05f;
+};
+
 struct Tile
 {
     std::vector<ecs::entityId> ids;
@@ -117,11 +127,12 @@ struct Globals
 
     struct Prefabs
     {
-        ecs::Prefab<Size, Position, Velocity, TileReferenceCreator, AttachedToPaddle, Ball> attachedBall = { Size{ ballRadius * 2, ballRadius * 2 }, TileReferenceCreator{true} };
-        ecs::Prefab<Size, Position, Velocity, TileReferenceCreator, Ball> spawnedBall = { Size{ ballRadius * 2, ballRadius * 2 }, TileReferenceCreator{true} };
+        ecs::Prefab<Size, Position, Velocity, TileReferenceCreator, AttachedToPaddle, Ball, ParticleEmitter> attachedBall = { Size{ ballRadius * 2, ballRadius * 2 }, TileReferenceCreator{true} };
+        ecs::Prefab<Size, Position, Velocity, TileReferenceCreator, Ball, ParticleEmitter> spawnedBall = { Size{ ballRadius * 2, ballRadius * 2 }, TileReferenceCreator{true} };
         ecs::Prefab<Position, Size, TileReferenceCreator, Paddle> paddle;
         ecs::Prefab<Position, Size, TileReferenceCreator, Brick> brick;
         ecs::Prefab<Position, Size, Camera> camera;
+        ecs::Prefab<Position, Size, Particle, ecs::DontSaveEntity> particle = { Size{ 5.0f, 5.0f } };
     };
 
     ecs::Ecs ecs;

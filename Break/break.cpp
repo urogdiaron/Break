@@ -81,6 +81,8 @@ void register_types()
     ecs.registerType<CollidedWithBall>("CollidedWithBall");
     ecs.registerType<Camera>("Camera");
     ecs.registerType<Visible>("Visible", ecs::ComponentType::DontSave);
+    ecs.registerType<Particle>("Particle");
+    ecs.registerType<ParticleEmitter>("ParticleEmitter");
 }
 
 bool loadTexture(const char* fileName)
@@ -524,8 +526,11 @@ void update_visibility()
     vec cameraMin = *cameraPos - *cameraSize * 0.5f;
     vec cameraMax = *cameraPos + *cameraSize * 0.5f;
 
-    auto fnIsVisible = [cameraMin, cameraMax](const vec& objectMin, const vec& objectMax) -> bool
+    auto fnIsVisible = [cameraMin, cameraMax](const vec& pos, const vec& size) -> bool
     {
+        vec objectMin = pos - size * 0.5f;
+        vec objectMax = pos + size * 0.5f;
+
         bool outside = 
             objectMin.x > cameraMax.x ||
             objectMin.y > cameraMax.y ||
@@ -535,26 +540,19 @@ void update_visibility()
         return !outside;
     };
 
-    auto v = ecs::View<const Position, const Size>(getEcs());
-    for (auto& [it, id, pos, size] : v)
+    auto v1 = ecs::View<const Position, const Size>(getEcs()).with<Visible>();
+    for (auto& [it, id, pos, size] : v1)
     {
-        vec objectMin = pos - size * 0.5f;
-        vec objectMax = pos + size * 0.5f;
-
-        if (it.hasComponents<Visible>())
-        {
-            if(!fnIsVisible(objectMin, objectMax))
-                v.deleteComponents<Visible>(id);
-        }
-        else
-        {
-            if (fnIsVisible(objectMin, objectMax))
-            {
-                v.addComponent<Visible>(id);
-            }
-        }
+        if (!fnIsVisible(pos, size))
+            v1.deleteComponents<Visible>(id);
     }
 
+    auto v2 = ecs::View<const Position, const Size>(getEcs()).exclude<Visible>();
+    for (auto& [it, id, pos, size] : v2)
+    {
+        if (fnIsVisible(pos, size))
+            v2.addComponent<Visible>(id);
+    }
 }
 
 void render_paddle()
@@ -618,6 +616,25 @@ void render_bricks()
 
 
         //render_rect(pos, size, brick.type == Brick::Type::Simple ? sf::Color::Magenta : sf::Color::Yellow);
+    }
+}
+
+void render_particles()
+{
+    sf::Sprite sprite;
+    sprite.setTexture(g_Globals.textures["ball.png"]);
+    auto textureSize = sprite.getTexture()->getSize();
+    sprite.setOrigin(textureSize.x * 0.5f, textureSize.y * 0.5f);
+    vec sizeCorrection = vec(1.0f / textureSize.x, 1.0f / textureSize.y);
+    for (auto& [it, id, pos, size, brick] : ecs::View<Position, Size, Particle>(getEcs()).with<Visible>())
+    {
+        vec center = pos;
+        vec scale = vec(size.x * sizeCorrection.x, size.y * sizeCorrection.y);
+        center.y = g_Globals.screenSize.y - center.y;
+        sprite.setPosition(center);
+        sprite.setScale(scale);
+        sprite.setColor(sf::Color::Yellow);
+        g_Globals.window.draw(sprite);
     }
 }
 
@@ -734,6 +751,35 @@ void update_camera_move()
     }
 }
 
+void update_ball_trail_particles()
+{
+    float elapsedTime = g_Globals.elapsedTime;
+    float emitterInterval = 0.1f;
+
+    {
+        auto v = ecs::View<Position, ParticleEmitter>(getEcs()).exclude<AttachedToPaddle>();
+        for (auto& [it, id, pos, emitter] : v)
+        {
+            emitter.timeUntilNextEmit -= elapsedTime;
+            if (emitter.timeUntilNextEmit < 0.0f)
+            {
+                emitter.timeUntilNextEmit = emitterInterval;
+                v.createEntity(g_Globals.prefabs.particle, pos);
+            }
+        }
+    }
+
+    {
+        auto v = ecs::View<Particle>(getEcs());
+        for (auto& [it, id, particle] : v)
+        {
+            particle.timeToLive -= elapsedTime;
+            if (particle.timeToLive < 0.0f)
+                v.deleteEntity(id);
+        }
+    }
+}
+
 void update()
 {
     EASY_FUNCTION();
@@ -750,6 +796,8 @@ void update()
 
     update_ball_respawns();
     update_camera_move();
+
+    update_ball_trail_particles();
 
     clear_tile_references_for_deleted_entities();
 }
@@ -786,6 +834,7 @@ void render()
     render_paddle();
     render_balls();
     render_bricks();
+    render_particles();
     //render_tile_debug();
     render_stats();
 }
