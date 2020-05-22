@@ -66,8 +66,7 @@ void init_tiles()
     g_Globals.tilesBricks.resize(tileCountX * tileCountY);
 }
 
-void register_types()
-{
+void register_types(){
     auto& ecs = getEcs();
     ecs.registerType<Position>("Position");
     ecs.registerType<Size>("Size");
@@ -83,6 +82,7 @@ void register_types()
     ecs.registerType<Visible>("Visible", ecs::ComponentType::DontSave);
     ecs.registerType<Particle>("Particle");
     ecs.registerType<ParticleEmitter>("ParticleEmitter");
+    ecs.registerType<TransformOrder>("TransformOrder", ecs::ComponentType::Shared);
 }
 
 bool loadTexture(const char* fileName)
@@ -280,8 +280,8 @@ void setup_level(GameState& gamestate)
     auto size = Size{ 150.0f, Globals::paddleHeight };
     entityId paddleId = ecs.createEntity(g_Globals.prefabs.paddle, pos, size);
 
-    int rows = 25;
-    int columns = 25;
+    int rows = 50;
+    int columns = 50;
 
     float brickSpacing = 0;
 
@@ -874,7 +874,7 @@ int main()
 
     auto& window = g_Globals.window;
     window.setMouseCursorVisible(false);
-    window.setMouseCursorGrabbed(true);
+    //window.setMouseCursorGrabbed(true);
 
     spawn_ball_on_paddle();
 
@@ -902,6 +902,9 @@ int main()
                     break;
                 case sf::Keyboard::D:
                     g_debugBall = !g_debugBall;
+                    break;
+                case sf::Keyboard::S:
+                    getEcs().setSharedComponent(1000, TransformOrder{ 5 });
                     break;
                 case sf::Keyboard::F5:
                     save_ecs();
