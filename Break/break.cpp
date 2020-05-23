@@ -83,27 +83,27 @@ void register_types(){
     ecs.registerType<Particle>("Particle");
     ecs.registerType<ParticleEmitter>("ParticleEmitter");
     ecs.registerType<TransformOrder>("TransformOrder", ecs::ComponentType::Shared);
+    ecs.registerType<SpriteIndex>("SpriteIndex", ecs::ComponentType::Shared);
 }
 
-bool loadTexture(const char* fileName)
+int loadTexture(const char* fileName)
 {
     sf::Texture texture;
     bool success = texture.loadFromFile(fileName);
     if (!success)
-        return false;
+        return 0;
 
-    g_Globals.textures[fileName] = texture;
-    return true;
+    int textureIndex = (int)g_Globals.textures.size() + 1;
+    g_Globals.textures[textureIndex] = texture;
+    return textureIndex;
 }
 
-bool loadTextures()
+void loadTextures()
 {
     sf::Texture texture;
-    bool success = true;
-    success = success && loadTexture("brick.png");
-    success = success && loadTexture("paddle.png");
-    success = success && loadTexture("ball.png");
-    return success;
+    loadTexture("brick.png");
+    loadTexture("paddle.png");
+    loadTexture("ball.png");
 }
 
 void init_globals()
@@ -302,7 +302,7 @@ void setup_level(GameState& gamestate)
 		for (int i = 0; i < columns; i++)
 		{
             Brick::Type brickType = Brick::Type::Simple;
-            if (rand() % 10 == 0)
+            if (rand() % 1 == 0)
                 brickType = Brick::Type::Ballspawner;
 
             ecs::entityId id = ecs.createEntity(g_Globals.prefabs.brick, Position{ currentBrickPos }, Size{ brickSize }, Brick{ brickType });
@@ -555,85 +555,30 @@ void update_visibility()
     }
 }
 
-void render_paddle()
+void render_sprites()
 {
     sf::Sprite sprite;
-    sprite.setTexture(g_Globals.textures["paddle.png"]);
-    auto textureSize = sprite.getTexture()->getSize();
-    sprite.setOrigin(textureSize.x * 0.5f, textureSize.y * 0.5f);
-    vec sizeCorrection = vec(1.0f / textureSize.x, 1.0f / textureSize.y);
+    int currentSpriteIndex = 0;
+    vec sizeCorrection = { 1.0f, 1.0f };
 
-    for (auto& [it, id, pos, size, paddle] : ecs::View<Position, Size, Paddle>(getEcs()).with<Visible>())
+    for (auto& [it, id, pos, size] : ecs::View<Position, Size>(getEcs()).with<Visible, SpriteIndex>())
     {
-        vec center = pos;
+        auto spriteIndex = it.getSharedComponent<SpriteIndex>();
+
+        if (currentSpriteIndex != spriteIndex->index)
+        {
+            sprite = sf::Sprite();
+            currentSpriteIndex = spriteIndex->index;
+            sprite.setTexture(g_Globals.textures[currentSpriteIndex]);
+            auto textureSize = sprite.getTexture()->getSize();
+            sprite.setOrigin(textureSize.x * 0.5f, textureSize.y * 0.5f);
+            sizeCorrection = vec(1.0f / textureSize.x, 1.0f / textureSize.y);
+        }
         vec scale = vec(size.x * sizeCorrection.x, size.y * sizeCorrection.y);
+        vec center = pos;
         center.y = g_Globals.screenSize.y - center.y;
         sprite.setPosition(center);
         sprite.setScale(scale);
-        //sprite.setColor(sf::Color(50, 50, 200, 255));
-        g_Globals.window.draw(sprite);
-
-        //render_rect(pos, size, sf::Color(50, 50, 200)); 
-    }
-
-}
-
-void render_balls()
-{
-    sf::Sprite sprite;
-    sprite.setTexture(g_Globals.textures["ball.png"]);
-    auto textureSize = sprite.getTexture()->getSize();
-    sprite.setOrigin(textureSize.x * 0.5f, textureSize.y * 0.5f);
-    vec scale = vec(g_Globals.ballRadius * 2 / textureSize.x, g_Globals.ballRadius * 2 / textureSize.y);
-    sprite.setScale(scale);
-
-    for (auto& [it, id, pos, ball] : ecs::View<Position, Ball>(getEcs()).with<Visible>())
-    {
-        vec center = pos;
-        center.y = g_Globals.screenSize.y - center.y;
-        sprite.setPosition(center);
-        g_Globals.window.draw(sprite);
-        //render_circle(pos, Globals::ballRadius, sf::Color(100, 100, 100));
-    }
-}
-
-void render_bricks()
-{
-    sf::Sprite sprite;
-    sprite.setTexture(g_Globals.textures["brick.png"]);
-    auto textureSize = sprite.getTexture()->getSize();
-    sprite.setOrigin(textureSize.x * 0.5f, textureSize.y * 0.5f);
-    vec sizeCorrection = vec(1.0f / textureSize.x, 1.0f / textureSize.y);
-    for (auto& [it, id, pos, size, brick] : ecs::View<Position, Size, Brick>(getEcs()).with<Visible>())
-    {
-        vec center = pos;
-        vec scale = vec(size.x * sizeCorrection.x, size.y * sizeCorrection.y);
-        center.y = g_Globals.screenSize.y - center.y;
-        sprite.setPosition(center);
-        sprite.setScale(scale);
-        sprite.setColor(brick.type == Brick::Type::Simple ? sf::Color::Magenta : sf::Color::Yellow);
-        g_Globals.window.draw(sprite);
-
-
-        //render_rect(pos, size, brick.type == Brick::Type::Simple ? sf::Color::Magenta : sf::Color::Yellow);
-    }
-}
-
-void render_particles()
-{
-    sf::Sprite sprite;
-    sprite.setTexture(g_Globals.textures["ball.png"]);
-    auto textureSize = sprite.getTexture()->getSize();
-    sprite.setOrigin(textureSize.x * 0.5f, textureSize.y * 0.5f);
-    vec sizeCorrection = vec(1.0f / textureSize.x, 1.0f / textureSize.y);
-    for (auto& [it, id, pos, size, brick] : ecs::View<Position, Size, Particle>(getEcs()).with<Visible>())
-    {
-        vec center = pos;
-        vec scale = vec(size.x * sizeCorrection.x, size.y * sizeCorrection.y);
-        center.y = g_Globals.screenSize.y - center.y;
-        sprite.setPosition(center);
-        sprite.setScale(scale);
-        sprite.setColor(sf::Color::Yellow);
         g_Globals.window.draw(sprite);
     }
 }
@@ -831,10 +776,7 @@ void render()
     EASY_FUNCTION();
     setViewFromCamera();
     update_visibility();
-    render_paddle();
-    render_balls();
-    render_bricks();
-    render_particles();
+    render_sprites();
     //render_tile_debug();
     render_stats();
 }
@@ -902,9 +844,6 @@ int main()
                     break;
                 case sf::Keyboard::D:
                     g_debugBall = !g_debugBall;
-                    break;
-                case sf::Keyboard::S:
-                    getEcs().setSharedComponent(1000, TransformOrder{ 5 });
                     break;
                 case sf::Keyboard::F5:
                     save_ecs();

@@ -123,6 +123,11 @@ struct TransformOrder
     int order = 0;
 };
 
+struct SpriteIndex
+{
+    int index = 0;
+};
+
 struct Globals
 {
     inline static float paddleHeight = 25.0f;
@@ -132,12 +137,12 @@ struct Globals
 
     struct Prefabs
     {
-        ecs::Prefab<Size, Position, Velocity, TileReferenceCreator, AttachedToPaddle, Ball, ParticleEmitter> attachedBall = { Size{ ballRadius * 2, ballRadius * 2 }, TileReferenceCreator{true} };
-        ecs::Prefab<Size, Position, Velocity, TileReferenceCreator, Ball, ParticleEmitter> spawnedBall = { Size{ ballRadius * 2, ballRadius * 2 }, TileReferenceCreator{true} };
-        ecs::Prefab<Position, Size, TileReferenceCreator, Paddle> paddle;
-        ecs::Prefab<Position, Size, TileReferenceCreator, Brick, TransformOrder> brick;
+        ecs::Prefab<Size, Position, Velocity, TileReferenceCreator, AttachedToPaddle, Ball, ParticleEmitter, SpriteIndex> attachedBall = { Size{ ballRadius * 2, ballRadius * 2 }, TileReferenceCreator{true}, SpriteIndex{3} };
+        ecs::Prefab<Size, Position, Velocity, TileReferenceCreator, Ball, ParticleEmitter, SpriteIndex> spawnedBall = { Size{ ballRadius * 2, ballRadius * 2 }, TileReferenceCreator{true}, SpriteIndex{3} };
+        ecs::Prefab<Position, Size, TileReferenceCreator, Paddle, SpriteIndex> paddle = { SpriteIndex{2} };
+        ecs::Prefab<Position, Size, TileReferenceCreator, Brick, SpriteIndex> brick = { SpriteIndex{1} };
         ecs::Prefab<Position, Size, Camera> camera;
-        ecs::Prefab<Position, Size, Particle, ecs::DontSaveEntity> particle = { Size{ 5.0f, 5.0f } };
+        ecs::Prefab<Position, Size, Particle, SpriteIndex, ecs::DontSaveEntity> particle = { Size{ 5.0f, 5.0f },  SpriteIndex{3} };
     };
 
     ecs::Ecs ecs;
@@ -154,7 +159,7 @@ struct Globals
     std::vector<Tile> tilesBricks;
 
     Prefabs prefabs;
-    std::unordered_map<std::string, sf::Texture> textures;
+    std::unordered_map<int, sf::Texture> textures;
 
     entityId camera;
 
