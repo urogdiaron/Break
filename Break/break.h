@@ -166,4 +166,5 @@ struct Globals
 
     float ballRespawnTimer = -1;
     float elapsedTime;
+    float gamelogicUpdateTime;
 };

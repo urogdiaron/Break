@@ -734,6 +734,8 @@ void update_ball_trail_particles()
 void update()
 {
     EASY_FUNCTION();
+    sf::Clock clock;
+
     create_tile_references_for_new_entities();
     update_paddle_by_mouse();
     update_balls_attached_to_paddle();
@@ -751,6 +753,9 @@ void update()
     update_ball_trail_particles();
 
     clear_tile_references_for_deleted_entities();
+
+    sf::Time elapsedTime = clock.restart();
+    g_Globals.gamelogicUpdateTime = elapsedTime.asSeconds();
 }
 
 void setViewFromCamera()
@@ -774,6 +779,11 @@ void render_stats()
     text.setPosition(10, 10);
     text.setFillColor(sf::Color::Green);
     text.setString(debugString);
+    g_Globals.window.draw(text);
+
+    sprintf_s(debugString, "Update time: %0.2f ms", g_Globals.gamelogicUpdateTime * 1000.0f);
+    text.setString(debugString);
+    text.setPosition(10, 40);
     g_Globals.window.draw(text);
 }
 
@@ -822,7 +832,7 @@ int main()
 
     auto& window = g_Globals.window;
     window.setMouseCursorVisible(false);
-    //window.setMouseCursorGrabbed(true);
+    window.setMouseCursorGrabbed(true);
 
     spawn_ball_on_paddle();
 
