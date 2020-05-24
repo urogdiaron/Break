@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?> 
+<AutoVisualizer xmlns="http://schemas.microsoft.com/vstudio/debugger/natvis/2010">
+  <Type Name="ecs::TypeDescriptor">
+    <DisplayString>{name} (#{index} {type})</DisplayString>
+  </Type>
+  <Type Name="ecs::typeIdList">
+    <DisplayString>{typeIds[0]->name},{typeIds[1]->name},{typeIds[2]->name},{typeIds[3]->name},{typeIds[4]->name},{typeIds[5]->name},{typeIds[6]->name},{typeIds[7]->name},{typeIds[8]->name},{typeIds[9]->name},{typeIds[10]->name}</DisplayString>
+    <Expand>
+      <ExpandedItem>typeIds</ExpandedItem>
+    </Expand>
+  </Type>
+  <Type Name="ecs::ComponentArray&lt;*&gt;">
+    <Expand>
+      <Item Name="buffer">($T1*)buffer</Item>
+    </Expand>
+  </Type>
+  <Type Name="ecs::Archetype">
+    <DisplayString>{{chunkCount={chunks.size()}} - {containedTypes_}</DisplayString>
+    <Expand>
+      <ExpandedItem>chunks</ExpandedItem>
+    </Expand>
+  </Type>
+  <Type Name="ecs::Chunk">
+    <DisplayString>{{size = {size}, capacity = {entityCapacity}}</DisplayString>
+  </Type>
+  <Type Name="std::unique_ptr&lt;*&gt;">
+    <SmartPointer Usage="Minimal">_Mypair._Myval2</SmartPointer>
+    <DisplayString Condition="_Mypair._Myval2 == 0">empty</DisplayString>
+    <DisplayString Condition="_Mypair._Myval2 != 0">{_Mypair._Myval2}</DisplayString>
+  </Type>
+</AutoVisualizer>

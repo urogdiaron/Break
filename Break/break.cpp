@@ -705,7 +705,7 @@ void update_camera_move()
 void update_ball_trail_particles()
 {
     float elapsedTime = g_Globals.elapsedTime;
-    float emitterInterval = 0.1f;
+    float emitterInterval = 0.01f;
 
     {
         auto v = ecs::View<Position, ParticleEmitter>(getEcs()).exclude<AttachedToPaddle>();
