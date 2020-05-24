@@ -296,7 +296,6 @@ void setup_level(GameState& gamestate)
 	vec currentBrickPos{ levelMarginHorizontal + brickSize.x * 0.5f, g_Globals.screenSize.y - levelMarginTop - brickSize.y * 0.5f };
 	vec originalBrickPosition = currentBrickPos; // for resetting after new line
 
-    int ballSpawnerCount = 0;
 	for (int j = 0; j < rows; j++)
     {
 		for (int i = 0; i < columns; i++)
@@ -306,9 +305,7 @@ void setup_level(GameState& gamestate)
             if (random == 0)
             {
                 brickType = Brick::Type::Ballspawner;
-                ballSpawnerCount++;
             }
-            printf("%d", random);
 
             ecs::entityId id = ecs.createEntity(g_Globals.prefabs.brick,
                 Position{ currentBrickPos }, Size{ brickSize }, Brick{ brickType },
@@ -319,7 +316,6 @@ void setup_level(GameState& gamestate)
         currentBrickPos.x = originalBrickPosition.x;
         currentBrickPos.y -= brickSize.y + brickSpacing;
     }
-    printf("\nBallspawnerCount: %d", ballSpawnerCount);
 
     g_Globals.camera = ecs.createEntity(g_Globals.prefabs.camera, Position{ g_Globals.screenSize * 0.5f }, Size{ g_Globals.screenSize });
 }
@@ -574,7 +570,7 @@ void render_sprites()
     {
         auto& currentSpriteDesc = *it.getSharedComponent<Sprite>();
 
-        //if (!ecs::equals(usedSpriteDesc, currentSpriteDesc))
+        if (!ecs::equals(usedSpriteDesc, currentSpriteDesc))
         {
             sprite = sf::Sprite();
             usedSpriteDesc = currentSpriteDesc;
