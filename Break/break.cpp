@@ -83,7 +83,7 @@ void register_types(){
     ecs.registerType<Particle>("Particle");
     ecs.registerType<ParticleEmitter>("ParticleEmitter");
     ecs.registerType<TransformOrder>("TransformOrder", ecs::ComponentType::Shared);
-    ecs.registerType<SpriteIndex>("SpriteIndex", ecs::ComponentType::Shared);
+    ecs.registerType<Sprite>("SpriteIndex", ecs::ComponentType::Shared);
 }
 
 int loadTexture(const char* fileName)
@@ -296,21 +296,30 @@ void setup_level(GameState& gamestate)
 	vec currentBrickPos{ levelMarginHorizontal + brickSize.x * 0.5f, g_Globals.screenSize.y - levelMarginTop - brickSize.y * 0.5f };
 	vec originalBrickPosition = currentBrickPos; // for resetting after new line
 
-
+    int ballSpawnerCount = 0;
 	for (int j = 0; j < rows; j++)
     {
 		for (int i = 0; i < columns; i++)
 		{
             Brick::Type brickType = Brick::Type::Simple;
-            if (rand() % 1 == 0)
+            int random = rand() % 10;
+            if (random == 0)
+            {
                 brickType = Brick::Type::Ballspawner;
+                ballSpawnerCount++;
+            }
+            printf("%d", random);
 
-            ecs::entityId id = ecs.createEntity(g_Globals.prefabs.brick, Position{ currentBrickPos }, Size{ brickSize }, Brick{ brickType });
+            ecs::entityId id = ecs.createEntity(g_Globals.prefabs.brick,
+                Position{ currentBrickPos }, Size{ brickSize }, Brick{ brickType },
+                Sprite{ 1, brickType == Brick::Type::Ballspawner ? sf::Color(255, 255, 0, 255) : sf::Color(255, 50, 10, 255) }
+            );
             currentBrickPos.x += brickSize.x + brickSpacing;
         }
         currentBrickPos.x = originalBrickPosition.x;
         currentBrickPos.y -= brickSize.y + brickSpacing;
     }
+    printf("\nBallspawnerCount: %d", ballSpawnerCount);
 
     g_Globals.camera = ecs.createEntity(g_Globals.prefabs.camera, Position{ g_Globals.screenSize * 0.5f }, Size{ g_Globals.screenSize });
 }
@@ -558,21 +567,22 @@ void update_visibility()
 void render_sprites()
 {
     sf::Sprite sprite;
-    int currentSpriteIndex = 0;
+    Sprite usedSpriteDesc;
     vec sizeCorrection = { 1.0f, 1.0f };
 
-    for (auto& [it, id, pos, size] : ecs::View<Position, Size>(getEcs()).with<Visible, SpriteIndex>())
+    for (auto& [it, id, pos, size] : ecs::View<Position, Size>(getEcs()).with<Visible, Sprite>())
     {
-        auto spriteIndex = it.getSharedComponent<SpriteIndex>();
+        auto& currentSpriteDesc = *it.getSharedComponent<Sprite>();
 
-        if (currentSpriteIndex != spriteIndex->index)
+        //if (!ecs::equals(usedSpriteDesc, currentSpriteDesc))
         {
             sprite = sf::Sprite();
-            currentSpriteIndex = spriteIndex->index;
-            sprite.setTexture(g_Globals.textures[currentSpriteIndex]);
+            usedSpriteDesc = currentSpriteDesc;
+            sprite.setTexture(g_Globals.textures[usedSpriteDesc.index]);
             auto textureSize = sprite.getTexture()->getSize();
             sprite.setOrigin(textureSize.x * 0.5f, textureSize.y * 0.5f);
             sizeCorrection = vec(1.0f / textureSize.x, 1.0f / textureSize.y);
+            sprite.setColor(usedSpriteDesc.color);
         }
         vec scale = vec(size.x * sizeCorrection.x, size.y * sizeCorrection.y);
         vec center = pos;

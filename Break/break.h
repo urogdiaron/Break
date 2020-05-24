@@ -123,9 +123,10 @@ struct TransformOrder
     int order = 0;
 };
 
-struct SpriteIndex
+struct Sprite
 {
     int index = 0;
+    sf::Color color = sf::Color(255, 255, 255, 255);
 };
 
 struct Globals
@@ -137,12 +138,12 @@ struct Globals
 
     struct Prefabs
     {
-        ecs::Prefab<Size, Position, Velocity, TileReferenceCreator, AttachedToPaddle, Ball, ParticleEmitter, SpriteIndex> attachedBall = { Size{ ballRadius * 2, ballRadius * 2 }, TileReferenceCreator{true}, SpriteIndex{3} };
-        ecs::Prefab<Size, Position, Velocity, TileReferenceCreator, Ball, ParticleEmitter, SpriteIndex> spawnedBall = { Size{ ballRadius * 2, ballRadius * 2 }, TileReferenceCreator{true}, SpriteIndex{3} };
-        ecs::Prefab<Position, Size, TileReferenceCreator, Paddle, SpriteIndex> paddle = { SpriteIndex{2} };
-        ecs::Prefab<Position, Size, TileReferenceCreator, Brick, SpriteIndex> brick = { SpriteIndex{1} };
+        ecs::Prefab<Size, Position, Velocity, TileReferenceCreator, AttachedToPaddle, Ball, ParticleEmitter, Sprite> attachedBall = { Size{ ballRadius * 2, ballRadius * 2 }, TileReferenceCreator{true}, Sprite{3} };
+        ecs::Prefab<Size, Position, Velocity, TileReferenceCreator, Ball, ParticleEmitter, Sprite> spawnedBall = { Size{ ballRadius * 2, ballRadius * 2 }, TileReferenceCreator{true}, Sprite{3} };
+        ecs::Prefab<Position, Size, TileReferenceCreator, Paddle, Sprite> paddle = { Sprite{2} };
+        ecs::Prefab<Position, Size, TileReferenceCreator, Brick, Sprite> brick = { Sprite{1} };
         ecs::Prefab<Position, Size, Camera> camera;
-        ecs::Prefab<Position, Size, Particle, SpriteIndex, ecs::DontSaveEntity> particle = { Size{ 5.0f, 5.0f },  SpriteIndex{3} };
+        ecs::Prefab<Position, Size, Particle, Sprite, ecs::DontSaveEntity> particle = { Size{ 5.0f, 5.0f },  Sprite{3} };
     };
 
     ecs::Ecs ecs;
