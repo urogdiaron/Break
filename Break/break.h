@@ -13,7 +13,7 @@
 #include <cstdint>
 
 #include "util.h"
-#include "../../Ecs/Project1/view.h"
+#include "../../Ecs/Project1/scheduler.h"
 
 #include "vec.h"
 #include "collision.h"
@@ -165,6 +165,8 @@ struct Globals
     entityId camera;
 
     float ballRespawnTimer = -1;
+    float timeMultipler = 1.0f;
     float elapsedTime;
     float gamelogicUpdateTime;
+    bool isPaused = false;
 };

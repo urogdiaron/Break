@@ -350,16 +350,17 @@ void fire_ball()
 void update_positions_by_velocities()
 {
     EASY_FUNCTION();
-    float dt = g_Globals.elapsedTime;
-    for (auto& [it, id, pos, vel, tileRef] : ecs::View<Position, Velocity, TileReference>(getEcs()).exclude<AttachedToPaddle>())
-    {
-        if (vel.x == 0.0f && vel.y == 0.0)
-            continue;
+    ecs::Scheduler s;
+    s.add(ecs::View<Position, Velocity, TileReference>(getEcs()).exclude<AttachedToPaddle>(),
+        [dt = g_Globals.elapsedTime](auto& it, auto& id, auto& pos, auto& vel, auto& tileRef)
+        {
+            if (vel.x == 0.0f && vel.y == 0.0)
+                return;
 
-        auto oldPos = pos;
-        pos += vel * dt;
-        update_tiles_after_move(id, oldPos, pos, Size(Globals::ballRadius, Globals::ballRadius), tileRef);
-    }
+            auto oldPos = pos;
+            pos += vel * dt;
+            update_tiles_after_move(id, oldPos, pos, Size(Globals::ballRadius, Globals::ballRadius), tileRef);
+        });
 }
 
 void update_paddle_by_mouse()
@@ -843,7 +844,12 @@ int main()
     {
         sf::Time elapsedTime = clock.restart();
         g_Globals.elapsedTime = elapsedTime.asSeconds();
+        g_Globals.elapsedTime *= g_Globals.timeMultipler;
         g_Globals.elapsedTime = std::min(g_Globals.elapsedTime, 1.0f / 60);
+
+        if (g_Globals.isPaused)
+            g_Globals.elapsedTime = 0.0f;
+
         // check all the window's events that were triggered since the last iteration of the loop
         sf::Event event;
         while (window.pollEvent(event))
@@ -860,6 +866,15 @@ int main()
                     break;
                 case sf::Keyboard::D:
                     g_debugBall = !g_debugBall;
+                    break;
+                case sf::Keyboard::P:
+                    g_Globals.isPaused = !g_Globals.isPaused;
+                    break;
+                case sf::Keyboard::Subtract:
+                    g_Globals.timeMultipler = std::max(0.0f, g_Globals.timeMultipler - 0.1f);
+                    break;
+                case sf::Keyboard::Add:
+                    g_Globals.timeMultipler = std::max(0.0f, g_Globals.timeMultipler + 0.1f);
                     break;
                 case sf::Keyboard::F5:
                     save_ecs();
