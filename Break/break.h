@@ -13,7 +13,7 @@
 #include <cstdint>
 
 #include "util.h"
-#include "../../Ecs/Project1/scheduler.h"
+#include "scheduler.h"
 
 #include "vec.h"
 #include "collision.h"
@@ -143,7 +143,7 @@ struct Globals
         ecs::Prefab<Position, Size, TileReferenceCreator, Paddle, Sprite> paddle = { Sprite{2} };
         ecs::Prefab<Position, Size, TileReferenceCreator, Brick, Sprite> brick = { Sprite{1} };
         ecs::Prefab<Position, Size, Camera> camera;
-        ecs::Prefab<Position, Size, Particle, Sprite, ecs::DontSaveEntity> particle = { Size{ 5.0f, 5.0f },  Sprite{3} };
+        ecs::Prefab<Position, Size, Velocity, Particle, Sprite, ecs::DontSaveEntity> particle = { Size{ 5.0f, 5.0f },  Sprite{3}, Velocity{ 20, -20 } };
     };
 
     ecs::Ecs ecs;

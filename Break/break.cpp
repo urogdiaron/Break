@@ -3,6 +3,7 @@
 #include <fstream>
 
 Globals g_Globals;
+ecs::Scheduler scheduler;
 
 bool g_debugBall = false;
 
@@ -301,7 +302,7 @@ void setup_level(GameState& gamestate)
 		for (int i = 0; i < columns; i++)
 		{
             Brick::Type brickType = Brick::Type::Simple;
-            int random = rand() % 10;
+            int random = rand() % 3;
             if (random == 0)
             {
                 brickType = Brick::Type::Ballspawner;
@@ -323,12 +324,12 @@ void setup_level(GameState& gamestate)
 void spawn_ball_on_paddle()
 {
     auto& ecs = getEcs();
-    ecs::View<Position, Size, Paddle> paddleView(ecs);
+    auto paddleView = ecs::View<Position, Size>(ecs).with<Paddle>();
     auto itPaddle = paddleView.begin();
     if (itPaddle == paddleView.end())
         return;
 
-    auto& [it, paddleId, pos, size, paddle] = *itPaddle;
+    auto& [it, paddleId, pos, size] = *itPaddle;
     vec ballPosition = pos + vec(0.0f, size.y * 0.5f + Globals::ballRadius);
 
     ecs::entityId ballId = ecs.createEntity(g_Globals.prefabs.attachedBall,
@@ -350,8 +351,9 @@ void fire_ball()
 void update_positions_by_velocities()
 {
     EASY_FUNCTION();
-    ecs::Scheduler s;
-    s.add(ecs::View<Position, Velocity, TileReference>(getEcs()).exclude<AttachedToPaddle>(),
+    bool oldValue = scheduler.singleThreadedMode;
+    scheduler.singleThreadedMode = true;
+    scheduler.add(ecs::View<Position, const Velocity, TileReference>(getEcs()).exclude<AttachedToPaddle>(),
         [dt = g_Globals.elapsedTime](auto& it, auto& id, auto& pos, auto& vel, auto& tileRef)
         {
             if (vel.x == 0.0f && vel.y == 0.0)
@@ -361,6 +363,15 @@ void update_positions_by_velocities()
             pos += vel * dt;
             update_tiles_after_move(id, oldPos, pos, Size(Globals::ballRadius, Globals::ballRadius), tileRef);
         });
+
+    scheduler.singleThreadedMode = oldValue;
+    scheduler.add(ecs::View<Position, const Velocity>(getEcs()).exclude<AttachedToPaddle, TileReference>(),
+        [dt = g_Globals.elapsedTime](auto& it, auto& id, auto& pos, auto& vel)
+    {
+        pos += vel * dt;
+    });
+
+    scheduler.waitAll();
 }
 
 void update_paddle_by_mouse()
@@ -875,6 +886,9 @@ int main()
                     break;
                 case sf::Keyboard::Add:
                     g_Globals.timeMultipler = std::max(0.0f, g_Globals.timeMultipler + 0.1f);
+                    break;
+                case sf::Keyboard::M:
+                    scheduler.singleThreadedMode = !scheduler.singleThreadedMode;
                     break;
                 case sf::Keyboard::F5:
                     save_ecs();
