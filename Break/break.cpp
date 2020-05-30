@@ -60,11 +60,8 @@ void init_tiles()
     int tileCountX = get_tile_count_x();
     int tileCountY = get_tile_count_y();
 
-    g_Globals.tilesBalls.clear();
-    g_Globals.tilesBalls.resize(tileCountX * tileCountY);
-
-    g_Globals.tilesBricks.clear();
-    g_Globals.tilesBricks.resize(tileCountX * tileCountY);
+    g_Globals.tilesBricks = std::vector<Tile>(tileCountX * tileCountY);
+    g_Globals.tilesBalls = std::vector<Tile>(tileCountX * tileCountY);
 }
 
 void register_types(){
@@ -148,7 +145,13 @@ void insert_into_tiles(ecs::entityId id, const Position& pos, const Size& size, 
             if (x < 0 || x >= tileCountX)
                 continue;
 
-            tiles[y * tileCountX + x].ids.push_back(id);
+            auto& tile = tiles[y * tileCountX + x];
+            {
+#ifdef LOCK_TILES
+                std::lock_guard<std::mutex> lock(tile.mtx);
+#endif
+                tile.ids.push_back(id);
+            }
             tileRef.tiles.push_back(std::make_pair(x, y));
         }
     }
@@ -194,11 +197,16 @@ void update_tiles_after_move(ecs::entityId id, const Position& oldPos, const Pos
             bool isOutsideX = (x < newFirstTileX || x > newLastTileX);
             if (isOutsideX || isOutsideY)
             {
-                auto& ids = tiles[y * tileCountX + x].ids;
-                auto it = std::find(ids.begin(), ids.end(), id);
-                if (it != ids.end())
+                auto& tile = tiles[y * tileCountX + x];
+                auto it = std::find(tile.ids.begin(), tile.ids.end(), id);
+                if (it != tile.ids.end())
                 {
-                    unordered_delete(ids, it);
+                    {
+#ifdef LOCK_TILES
+                        std::lock_guard<std::mutex> lock(tile.mtx);
+#endif
+                        unordered_delete(tile.ids, it);
+                    }
                     auto itTileRef = std::find(tileRef.tiles.begin(), tileRef.tiles.end(), std::make_pair(x, y));
                     if (itTileRef != tileRef.tiles.end())
                         unordered_delete(tileRef.tiles, itTileRef);
@@ -221,11 +229,16 @@ void update_tiles_after_move(ecs::entityId id, const Position& oldPos, const Pos
             bool isOutsideX = (x < oldFirstTileX || x > oldLastTileX);
             if (isOutsideX || isOutsideY)
             {
-                auto& ids = tiles[y * tileCountX + x].ids;
-                auto it = std::find(ids.begin(), ids.end(), id);
-                if (it == ids.end())
+                auto& tile = tiles[y * tileCountX + x];
+                auto it = std::find(tile.ids.begin(), tile.ids.end(), id);
+                if (it == tile.ids.end())
                 {
-                    ids.push_back(id);
+                    {
+#ifdef LOCK_TILES
+                        std::lock_guard<std::mutex> lock(tile.mtx);
+#endif
+                        tile.ids.push_back(id);
+                    }
                     tileRef.tiles.push_back(std::make_pair(x, y));
                 }
             }
@@ -240,10 +253,15 @@ void update_tiles_for_deletion(ecs::entityId id, const TileReference& tileRef)
 
     for (auto [x, y] : tileRef.tiles)
     {
-        auto& ids = tiles[y * tileCountX + x].ids;
-        auto it = std::find(ids.begin(), ids.end(), id);
-        if (it != ids.end())
-            unordered_delete(ids, it);
+        auto& tile = tiles[y * tileCountX + x];
+        auto it = std::find(tile.ids.begin(), tile.ids.end(), id);
+        if (it != tile.ids.end())
+        {
+#ifdef LOCK_TILES
+            std::lock_guard<std::mutex> lock(tile.mtx);
+#endif
+            unordered_delete(tile.ids, it);
+        }
     }
 }
 
@@ -469,18 +487,20 @@ void update_ball_collisions_tiled()
         {
             for (auto brickId : g_Globals.tilesBricks[y * tileCountX + x].ids)
             {
-                auto [brickPos, brickSize, paddle, brick] = ecs.getComponents<Position, Size, Paddle, Brick>(brickId);
+                auto [brickPos, brickSize] = ecs.getComponents<Position, Size>(brickId);
                 BallCollision ballCollision;
                 bool overlap = test_circle_aabb_overlap(ballCollision.overlap, ballPos, Globals::ballRadius, *brickPos - *brickSize * 0.5f, *brickPos + *brickSize * 0.5f, false);
                 if (overlap)
                 {
+                    auto [hasBrick, hasPaddle] = ecs.hasEachComponent<Brick, Paddle>(brickId);
+
                     ballCollision.ballId = ballId;
                     ballCollision.otherObjectId = brickId;
-                    if (brick)
+                    if (hasBrick)
                     {
                         ballView.addComponent<CollidedWithBall>(brickId);
                     }
-                    else if (paddle)
+                    else if (hasPaddle)
                     {
                         float toBall = ballPos.x - brickPos->x;
                         toBall /= brickSize->x;

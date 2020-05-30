@@ -18,6 +18,8 @@
 #include "vec.h"
 #include "collision.h"
 
+#define LOCK_TILES
+
 using int16 = int16_t;
 using int32 = int32_t;
 using int64 = int64_t;
@@ -115,6 +117,9 @@ struct ParticleEmitter
 
 struct Tile
 {
+#ifdef LOCK_TILES
+    std::mutex mtx;
+#endif
     std::vector<ecs::entityId> ids;
 };
 
