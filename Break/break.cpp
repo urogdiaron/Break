@@ -145,7 +145,10 @@ void insert_into_tiles(ecs::entityId id, const Position& pos, const Size& size, 
             if (x < 0 || x >= tileCountX)
                 continue;
 
+            g_Globals.tilesMtx.lock();
             auto& tile = tiles[y * tileCountX + x];
+            g_Globals.tilesMtx.unlock();
+
             {
 #ifdef LOCK_TILES
                 std::lock_guard<std::mutex> lock(tile.mtx);
@@ -197,19 +200,22 @@ void update_tiles_after_move(ecs::entityId id, const Position& oldPos, const Pos
             bool isOutsideX = (x < newFirstTileX || x > newLastTileX);
             if (isOutsideX || isOutsideY)
             {
+                g_Globals.tilesMtx.lock();
                 auto& tile = tiles[y * tileCountX + x];
-                auto it = std::find(tile.ids.begin(), tile.ids.end(), id);
-                if (it != tile.ids.end())
+                g_Globals.tilesMtx.unlock();
+
                 {
-                    {
 #ifdef LOCK_TILES
-                        std::lock_guard<std::mutex> lock(tile.mtx);
+                    std::lock_guard<std::mutex> lock(tile.mtx);
 #endif
+                    auto it = std::find(tile.ids.begin(), tile.ids.end(), id);
+                    if (it != tile.ids.end())
+                    {
                         unordered_delete(tile.ids, it);
+                        auto itTileRef = std::find(tileRef.tiles.begin(), tileRef.tiles.end(), std::make_pair(x, y));
+                        if (itTileRef != tileRef.tiles.end())
+                            unordered_delete(tileRef.tiles, itTileRef);
                     }
-                    auto itTileRef = std::find(tileRef.tiles.begin(), tileRef.tiles.end(), std::make_pair(x, y));
-                    if (itTileRef != tileRef.tiles.end())
-                        unordered_delete(tileRef.tiles, itTileRef);
                 }
             }
         }
@@ -229,17 +235,20 @@ void update_tiles_after_move(ecs::entityId id, const Position& oldPos, const Pos
             bool isOutsideX = (x < oldFirstTileX || x > oldLastTileX);
             if (isOutsideX || isOutsideY)
             {
+                g_Globals.tilesMtx.lock();
                 auto& tile = tiles[y * tileCountX + x];
-                auto it = std::find(tile.ids.begin(), tile.ids.end(), id);
-                if (it == tile.ids.end())
+                g_Globals.tilesMtx.unlock();
+
                 {
-                    {
 #ifdef LOCK_TILES
-                        std::lock_guard<std::mutex> lock(tile.mtx);
+                    std::lock_guard<std::mutex> lock(tile.mtx);
 #endif
+                    auto it = std::find(tile.ids.begin(), tile.ids.end(), id);
+                    if (it == tile.ids.end())
+                    {
                         tile.ids.push_back(id);
+                        tileRef.tiles.push_back(std::make_pair(x, y));
                     }
-                    tileRef.tiles.push_back(std::make_pair(x, y));
                 }
             }
         }
@@ -253,14 +262,19 @@ void update_tiles_for_deletion(ecs::entityId id, const TileReference& tileRef)
 
     for (auto [x, y] : tileRef.tiles)
     {
+        g_Globals.tilesMtx.lock();
         auto& tile = tiles[y * tileCountX + x];
-        auto it = std::find(tile.ids.begin(), tile.ids.end(), id);
-        if (it != tile.ids.end())
+        g_Globals.tilesMtx.unlock();
+
         {
 #ifdef LOCK_TILES
             std::lock_guard<std::mutex> lock(tile.mtx);
 #endif
-            unordered_delete(tile.ids, it);
+            auto it = std::find(tile.ids.begin(), tile.ids.end(), id);
+            if (it != tile.ids.end())
+            {
+                unordered_delete(tile.ids, it);
+            }
         }
     }
 }
@@ -366,13 +380,19 @@ void fire_ball()
     }
 }
 
-void update_positions_by_velocities()
+struct PositionByVelocitySystem
 {
-    EASY_FUNCTION();
-    bool oldValue = scheduler.singleThreadedMode;
-    scheduler.singleThreadedMode = true;
-    scheduler.add(ecs::View<Position, const Velocity, TileReference>(getEcs()).exclude<AttachedToPaddle>(),
-        [dt = g_Globals.elapsedTime](auto& it, auto& id, auto& pos, auto& vel, auto& tileRef)
+    PositionByVelocitySystem(ecs::Ecs& ecs)
+        : tiledUpdateView(ecs::View<Position, const Velocity, TileReference>(ecs).exclude<AttachedToPaddle>())
+        , simpleUpdateView(ecs::View<Position, const Velocity>(ecs).exclude<AttachedToPaddle, TileReference>())
+    {
+    }
+
+    void addTasks(ecs::Scheduler& sceduler)
+    {
+        int counterIndex = scheduler.createCounter();
+        scheduler.add(counterIndex, &tiledUpdateView,
+            [dt = g_Globals.elapsedTime](auto& it, auto& id, auto& pos, auto& vel, auto& tileRef)
         {
             if (vel.x == 0.0f && vel.y == 0.0)
                 return;
@@ -382,13 +402,22 @@ void update_positions_by_velocities()
             update_tiles_after_move(id, oldPos, pos, Size(Globals::ballRadius, Globals::ballRadius), tileRef);
         });
 
-    scheduler.singleThreadedMode = oldValue;
-    scheduler.add(ecs::View<Position, const Velocity>(getEcs()).exclude<AttachedToPaddle, TileReference>(),
-        [dt = g_Globals.elapsedTime](auto& it, auto& id, auto& pos, auto& vel)
-    {
-        pos += vel * dt;
-    });
+        scheduler.add(counterIndex, &simpleUpdateView,
+            [dt = g_Globals.elapsedTime](auto& it, auto& id, auto& pos, auto& vel)
+        {
+            pos += vel * dt;
+        });
+    }
 
+    ecs::View<Position, const Velocity, TileReference> tiledUpdateView;
+    ecs::View<Position, const Velocity> simpleUpdateView;
+};
+
+void update_positions_by_velocities()
+{
+    EASY_FUNCTION();
+    PositionByVelocitySystem s(getEcs());
+    s.addTasks(scheduler);
     scheduler.waitAll();
 }
 

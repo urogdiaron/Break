@@ -161,6 +161,8 @@ struct Globals
     sf::RenderStates renderState;
 
     std::vector<BallCollision> ballCollisions;
+
+    std::mutex tilesMtx;
     std::vector<Tile> tilesBalls;
     std::vector<Tile> tilesBricks;
 
