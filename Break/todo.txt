@@ -1,0 +1,20 @@
+I want (position update THEN collision update) and (particle create THEN particle delete) at the same time.
+
+ECS:
+Prefabs should be not templated, but dynamically loadable
+Experimenting with dymamic buffer component type?
+Saving should be enabled again.
+Make commandbuffers a lockless buffer. Fixed sized temp buffer with atomic increments.
+
+Break:
+Make ballCollisions entities and make the collision code fibered.
+ Alternatively a task should maybe be able to add to an array locked. If we provide a lockless array with temp allocator.
+Sprite Color should be separate and non-shared. At least not for the particles, that should animate and fade out with positions moving, etc.
+Visibility updates are busted, that should be fixed.
+Sometimes balls fly out of bounds.
+
+Scheduler
+Just see if it adds any speed, right now threads are very slow, fibers are the same speed (though faster in debug).
+Handle multiple independent views
+System groups:
+ We need a fibered function that calls the setupTasks functions. And it needs to wait between them. Just like the setupTasks waits between the addTasks. Also these should be renamed.

@@ -4,6 +4,8 @@
 
 Globals g_Globals;
 ecs::Scheduler scheduler;
+int scheduleCounter_UpdateMovement;
+int scheduleCounter_UpdateParticles;
 
 bool g_debugBall = false;
 
@@ -382,43 +384,40 @@ void fire_ball()
 
 struct PositionByVelocitySystem
 {
-    PositionByVelocitySystem(ecs::Ecs& ecs)
-        : tiledUpdateView(ecs::View<Position, const Velocity, TileReference>(ecs).exclude<AttachedToPaddle>())
-        , simpleUpdateView(ecs::View<Position, const Velocity>(ecs).exclude<AttachedToPaddle, TileReference>())
+    PositionByVelocitySystem()
     {
     }
 
-    void addTasks(ecs::Scheduler& sceduler)
+    static void setupTasks(ecs::Ecs* ecs, ecs::Scheduler* scheduler, int counterIndex)
     {
-        int counterIndex = scheduler.createCounter();
-        scheduler.add(counterIndex, &tiledUpdateView,
-            [dt = g_Globals.elapsedTime](auto& it, auto& id, auto& pos, auto& vel, auto& tileRef)
         {
-            if (vel.x == 0.0f && vel.y == 0.0)
-                return;
+            auto view1 = ecs::View<Position, const Velocity, TileReference>(*ecs).exclude<AttachedToPaddle>();
+            scheduler->addTask(counterIndex, &view1,
+                [dt = g_Globals.elapsedTime](auto& it, auto& id, auto& pos, auto& vel, auto& tileRef)
+            {
+                if (vel.x == 0.0f && vel.y == 0.0)
+                    return;
 
-            auto oldPos = pos;
-            pos += vel * dt;
-            update_tiles_after_move(id, oldPos, pos, Size(Globals::ballRadius, Globals::ballRadius), tileRef);
-        });
+                auto oldPos = pos;
+                pos += vel * dt;
+                update_tiles_after_move(id, oldPos, pos, Size(Globals::ballRadius, Globals::ballRadius), tileRef);
+            });
+        }
 
-        scheduler.add(counterIndex, &simpleUpdateView,
-            [dt = g_Globals.elapsedTime](auto& it, auto& id, auto& pos, auto& vel)
         {
-            pos += vel * dt;
-        });
+            auto view2 = ecs::View<Position, const Velocity>(*ecs).exclude<AttachedToPaddle, TileReference>();
+            scheduler->addTask(counterIndex, &view2,
+                [dt = g_Globals.elapsedTime](auto& it, auto& id, auto& pos, auto& vel)
+            {
+                pos += vel * dt;
+            });
+        }
     }
-
-    ecs::View<Position, const Velocity, TileReference> tiledUpdateView;
-    ecs::View<Position, const Velocity> simpleUpdateView;
 };
 
-void update_positions_by_velocities()
+void update_positions_by_velocities(ecs::Ecs* ecs, typename ecs::Scheduler* scheduler, int systemGroupIndex)
 {
-    EASY_FUNCTION();
-    PositionByVelocitySystem s(getEcs());
-    s.addTasks(scheduler);
-    scheduler.waitAll();
+    scheduler->setupTasks(ecs, systemGroupIndex, PositionByVelocitySystem::setupTasks);
 }
 
 void update_paddle_by_mouse()
@@ -451,96 +450,108 @@ void update_balls_attached_to_paddle()
     }
 }
 
-void update_ball_collisions_tiled()
+void update_ball_collisions_tiled(ecs::Ecs* ecs, typename ecs::Scheduler* scheduler, int systemGroupIndex)
 {
-    EASY_FUNCTION();
     g_Globals.ballCollisions.clear();
-    auto& ecs = getEcs();
-
-    int tileCountX = get_tile_count_x();
-    int tileCountY = get_tile_count_y();
-    auto ballView = ecs::View<Position, TileReference>(ecs).with<Ball>();
-    for (auto& [it, ballId, ballPos, ballTileRef] : ballView)
+    auto fnSetupTasks = [](ecs::Ecs* ecs, typename ecs::Scheduler* scheduler, int counterIndex)
     {
-        bool leftEdge = false, rightEdge = false, topEdge = false, bottomEdge = false;
-        for (auto [x, y] : ballTileRef.tiles)
-        {
-            if (x == 0)
-                leftEdge = true;
-            if (x == tileCountX - 1)
-                rightEdge = true;
-            if (y == 0)
-                bottomEdge = true;
-            if (y == tileCountY - 1)
-                topEdge = true;
-        }
+        int tileCountX = get_tile_count_x();
+        int tileCountY = get_tile_count_y();
 
-        if (bottomEdge && ballPos.y < 0)
-        {   // Ball dies
-            ballView.deleteEntity(ballId);
-            break;
-        }
-
-        if(leftEdge && ballPos.x - Globals::ballRadius < 0)
-        {
-            BallCollision ballCollision;
-            ballCollision.ballId = ballId;
-            ballCollision.otherObjectId = 0;
-            ballCollision.overlap.penetration = -(ballPos.x - Globals::ballRadius);
-            ballCollision.overlap.collisionPoint = vec(0, ballPos.y);
-            ballCollision.overlap.normal = vec(1, 0);
-            g_Globals.ballCollisions.push_back(ballCollision);
-        }
-        if(rightEdge && ballPos.x + Globals::ballRadius > g_Globals.screenSize.x)
-        {
-            BallCollision ballCollision;
-            ballCollision.ballId = ballId;
-            ballCollision.otherObjectId = 0;
-            ballCollision.overlap.penetration = ballPos.x + Globals::ballRadius - g_Globals.screenSize.x;
-            ballCollision.overlap.collisionPoint = vec(g_Globals.screenSize.x, ballPos.y);
-            ballCollision.overlap.normal = vec(-1, 0);
-            g_Globals.ballCollisions.push_back(ballCollision);
-        }
-        if(topEdge && ballPos.y + Globals::ballRadius > g_Globals.screenSize.y)
-        {
-            BallCollision ballCollision;
-            ballCollision.ballId = ballId;
-            ballCollision.otherObjectId = 0;
-            ballCollision.overlap.penetration = ballPos.y + Globals::ballRadius - g_Globals.screenSize.y;
-            ballCollision.overlap.collisionPoint = vec(ballPos.x, g_Globals.screenSize.y);
-            ballCollision.overlap.normal = vec(0, -1);
-            g_Globals.ballCollisions.push_back(ballCollision);
-        }
-
-        for (auto [x, y] : ballTileRef.tiles)
-        {
-            for (auto brickId : g_Globals.tilesBricks[y * tileCountX + x].ids)
+        auto ballView = ecs::View<Position, TileReference>(*ecs).with<Ball>();
+        scheduler->addTask(counterIndex, &ballView,
+            [&](auto& it, auto& ballId, auto& ballPos, auto& ballTileRef)
             {
-                auto [brickPos, brickSize] = ecs.getComponents<Position, Size>(brickId);
-                BallCollision ballCollision;
-                bool overlap = test_circle_aabb_overlap(ballCollision.overlap, ballPos, Globals::ballRadius, *brickPos - *brickSize * 0.5f, *brickPos + *brickSize * 0.5f, false);
-                if (overlap)
+                bool leftEdge = false, rightEdge = false, topEdge = false, bottomEdge = false;
+                for (auto [x, y] : ballTileRef.tiles)
                 {
-                    auto [hasBrick, hasPaddle] = ecs.hasEachComponent<Brick, Paddle>(brickId);
-
-                    ballCollision.ballId = ballId;
-                    ballCollision.otherObjectId = brickId;
-                    if (hasBrick)
-                    {
-                        ballView.addComponent<CollidedWithBall>(brickId);
-                    }
-                    else if (hasPaddle)
-                    {
-                        float toBall = ballPos.x - brickPos->x;
-                        toBall /= brickSize->x;
-                        ballCollision.overlap.normal.x = lerp(0.0f, 0.9f, toBall);
-                        ballCollision.overlap.normal = vec_normalize(ballCollision.overlap.normal);
-                    }
-                    g_Globals.ballCollisions.push_back(ballCollision);
+                    if (x == 0)
+                        leftEdge = true;
+                    if (x == tileCountX - 1)
+                        rightEdge = true;
+                    if (y == 0)
+                        bottomEdge = true;
+                    if (y == tileCountY - 1)
+                        topEdge = true;
                 }
-            }
-        }
-    }
+
+                if (bottomEdge && ballPos.y < 0)
+                {   // Ball dies
+                    ballView.deleteEntity(ballId);
+                    return;
+                }
+
+                if (leftEdge && ballPos.x - Globals::ballRadius < 0)
+                {
+                    BallCollision ballCollision;
+                    ballCollision.ballId = ballId;
+                    ballCollision.otherObjectId = 0;
+                    ballCollision.overlap.penetration = -(ballPos.x - Globals::ballRadius);
+                    ballCollision.overlap.collisionPoint = vec(0, ballPos.y);
+                    ballCollision.overlap.normal = vec(1, 0);
+                    g_Globals.ballCollisionMtx.lock();
+                    g_Globals.ballCollisions.push_back(ballCollision);
+                    g_Globals.ballCollisionMtx.unlock();
+                }
+                if (rightEdge && ballPos.x + Globals::ballRadius > g_Globals.screenSize.x)
+                {
+                    BallCollision ballCollision;
+                    ballCollision.ballId = ballId;
+                    ballCollision.otherObjectId = 0;
+                    ballCollision.overlap.penetration = ballPos.x + Globals::ballRadius - g_Globals.screenSize.x;
+                    ballCollision.overlap.collisionPoint = vec(g_Globals.screenSize.x, ballPos.y);
+                    ballCollision.overlap.normal = vec(-1, 0);
+                    g_Globals.ballCollisionMtx.lock();
+                    g_Globals.ballCollisions.push_back(ballCollision);
+                    g_Globals.ballCollisionMtx.unlock();
+                }
+                if (topEdge && ballPos.y + Globals::ballRadius > g_Globals.screenSize.y)
+                {
+                    BallCollision ballCollision;
+                    ballCollision.ballId = ballId;
+                    ballCollision.otherObjectId = 0;
+                    ballCollision.overlap.penetration = ballPos.y + Globals::ballRadius - g_Globals.screenSize.y;
+                    ballCollision.overlap.collisionPoint = vec(ballPos.x, g_Globals.screenSize.y);
+                    ballCollision.overlap.normal = vec(0, -1);
+                    g_Globals.ballCollisionMtx.lock();
+                    g_Globals.ballCollisions.push_back(ballCollision);
+                    g_Globals.ballCollisionMtx.unlock();
+                }
+
+                for (auto [x, y] : ballTileRef.tiles)
+                {
+                    for (auto brickId : g_Globals.tilesBricks[y * tileCountX + x].ids)
+                    {
+                        auto [brickPos, brickSize] = ecs->getComponents<Position, Size>(brickId);
+                        BallCollision ballCollision;
+                        bool overlap = test_circle_aabb_overlap(ballCollision.overlap, ballPos, Globals::ballRadius, *brickPos - *brickSize * 0.5f, *brickPos + *brickSize * 0.5f, false);
+                        if (overlap)
+                        {
+                            auto [hasBrick, hasPaddle] = ecs->hasEachComponent<Brick, Paddle>(brickId);
+
+                            ballCollision.ballId = ballId;
+                            ballCollision.otherObjectId = brickId;
+                            if (hasBrick)
+                            {
+                                ballView.addComponent<CollidedWithBall>(brickId);
+                            }
+                            else if (hasPaddle)
+                            {
+                                float toBall = ballPos.x - brickPos->x;
+                                toBall /= brickSize->x;
+                                ballCollision.overlap.normal.x = lerp(0.0f, 0.9f, toBall);
+                                ballCollision.overlap.normal = vec_normalize(ballCollision.overlap.normal);
+                            }
+                            g_Globals.ballCollisionMtx.lock();
+                            g_Globals.ballCollisions.push_back(ballCollision);
+                            g_Globals.ballCollisionMtx.unlock();
+                        }
+                    }
+                }
+            });
+    };
+
+    scheduler->setupTasks(ecs, systemGroupIndex, fnSetupTasks);
 }
 
 void resolve_ball_collisions()
@@ -763,33 +774,41 @@ void update_camera_move()
     }
 }
 
-void update_ball_trail_particles()
+void update_ball_trail_particles(ecs::Ecs* ecs, typename ecs::Scheduler* scheduler, int systemGroupIndex)
 {
-    float elapsedTime = g_Globals.elapsedTime;
-    float emitterInterval = 0.01f;
-
+    EASY_FUNCTION();
+    auto fnSetupTasks = [](ecs::Ecs* ecs, typename ecs::Scheduler* scheduler, int counterIndex)
     {
-        auto v = ecs::View<Position, ParticleEmitter>(getEcs()).exclude<AttachedToPaddle>();
-        for (auto& [it, id, pos, emitter] : v)
-        {
-            emitter.timeUntilNextEmit -= elapsedTime;
-            if (emitter.timeUntilNextEmit < 0.0f)
-            {
-                emitter.timeUntilNextEmit = emitterInterval;
-                v.createEntity(g_Globals.prefabs.particle, pos);
-            }
-        }
-    }
+        float elapsedTime = g_Globals.elapsedTime;
+        float emitterInterval = 0.01f;
 
-    {
-        auto v = ecs::View<Particle>(getEcs());
-        for (auto& [it, id, particle] : v)
         {
-            particle.timeToLive -= elapsedTime;
-            if (particle.timeToLive < 0.0f)
-                v.deleteEntity(id);
+            auto v = ecs::View<const Position, ParticleEmitter>(getEcs()).exclude<AttachedToPaddle>();
+            scheduler->addTask(counterIndex, &v,
+                [&](auto& it, auto& id, auto& pos, auto& emitter)
+                {
+                    emitter.timeUntilNextEmit -= elapsedTime;
+                    if (emitter.timeUntilNextEmit < 0.0f)
+                    {
+                        emitter.timeUntilNextEmit = emitterInterval;
+                        v.createEntity(g_Globals.prefabs.particle, pos);
+                    }
+                });
         }
-    }
+
+        {
+            auto v = ecs::View<Particle>(getEcs());
+            scheduler->addTask(counterIndex, &v,
+                [&](auto& it, auto& id, auto& particle)
+                {
+                    particle.timeToLive -= elapsedTime;
+                    if (particle.timeToLive < 0.0f)
+                        v.deleteEntity(id);
+                });
+        }
+    };
+
+    scheduler->setupTasks(ecs, systemGroupIndex, fnSetupTasks);
 }
 
 void update()
@@ -803,15 +822,30 @@ void update()
     update_ball_magnet();
     fix_up_horizontal_ball_velocities();
 
-    update_positions_by_velocities();
-    update_ball_collisions_tiled();
+    auto fnSetupGroup_UpdateTiled = [](ecs::Ecs* ecs, typename ecs::Scheduler* scheduler, int systemGroupIndex)
+    {
+        update_positions_by_velocities(ecs, scheduler, systemGroupIndex);
+        update_ball_collisions_tiled(ecs, scheduler, systemGroupIndex);
+    };
+
+    auto fnSetupGroup_UpdateParticles = [](ecs::Ecs* ecs, typename ecs::Scheduler* scheduler, int systemGroupIndex)
+    {
+        update_ball_trail_particles(ecs, scheduler, systemGroupIndex);
+    };
+
+    {
+        EASY_BLOCK("Adding system groups");
+        scheduler.setupSystemGroup(&getEcs(), fnSetupGroup_UpdateTiled);
+        scheduler.setupSystemGroup(&getEcs(), fnSetupGroup_UpdateParticles);
+    }
+    scheduler.waitAll(&getEcs());
+
     resolve_ball_collisions();
     handle_brick_collisions();
 
     update_ball_respawns();
     update_camera_move();
 
-    update_ball_trail_particles();
 
     clear_tile_references_for_deleted_entities();
 

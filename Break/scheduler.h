@@ -22,7 +22,7 @@ namespace ecs
 				ftl::AtomicCounter(&taskScheduler),
 			}
 		{
-			taskScheduler.Init({ 400, 4, ftl::EmptyQueueBehavior::Sleep });
+			taskScheduler.Init({ 400, 0, ftl::EmptyQueueBehavior::Sleep });
 		}
 
 		template<class Fn, class... Ts>
@@ -49,6 +49,74 @@ namespace ecs
 			};
 
 			return fn;
+		}
+
+		void setupSystemGroup(Ecs* ecs, void (*setupFunction)(Ecs*, Scheduler*, int))
+		{
+			auto fnWrapperTask = [](ftl::TaskScheduler* taskScheduler, void* args)
+			{
+				auto& [ecs, scheduler, setupFunction, counterIndex] = *reinterpret_cast<std::tuple<Ecs*, Scheduler*, void (*)(Ecs*, Scheduler*, int), int>*>(args);
+				setupFunction(ecs, scheduler, counterIndex);
+			};
+
+			int systemGroupIndex = createCounter();
+			auto argTuple = std::make_tuple(ecs, this, setupFunction, systemGroupIndex);
+			int bufferIndex = currentBufferIndex.fetch_add(sizeof(argTuple));
+			uint8_t* buffer = &argBuffer[bufferIndex];
+			memcpy(buffer, &argTuple, sizeof(argTuple));
+
+			ftl::Task task;
+			task.ArgData = buffer;
+			task.Function = fnWrapperTask;
+			taskScheduler.AddTasks(1, &task, &mainCounter);
+		}
+
+		void setupTasks(Ecs* ecs, int systemGroupIndex, void (*setupFunction)(Ecs*, Scheduler*, int))
+		{
+			taskScheduler.WaitForCounter(&countersRunning[systemGroupIndex], 0, false);
+			auto fnWrapperTask = [](ftl::TaskScheduler* taskScheduler, void* args)
+			{
+				auto& [ecs, scheduler, setupFunction, counterIndex] = *reinterpret_cast<std::tuple<Ecs*, Scheduler*, void (*)(Ecs*, Scheduler*, int), int>*>(args);
+				setupFunction(ecs, scheduler, counterIndex);
+			};
+
+			int taskCounterIndex = createCounter();
+			auto argTuple = std::make_tuple(ecs, this, setupFunction, taskCounterIndex);
+			int bufferIndex = currentBufferIndex.fetch_add(sizeof(argTuple));
+			uint8_t* buffer = &argBuffer[bufferIndex];
+			memcpy(buffer, &argTuple, sizeof(argTuple));
+
+			ftl::Task task;
+			task.ArgData = buffer;
+			task.Function = fnWrapperTask;
+			taskScheduler.AddTasks(1, &task, &countersRunning[systemGroupIndex]);
+		}
+
+		template <class Fn, class... Ts>
+		void addTask(int counterIndex, View<Ts...>* view, Fn&& job)		// Called from a fiber
+		{
+			taskScheduler.WaitForCounter(&countersRunning[counterIndex], 0, false);
+			view->initializeData();
+			int chunkCount = (int)view->queriedChunks_.size();
+			if (!chunkCount)
+				return;
+
+			{
+				EASY_BLOCK("Adding chunk tasks");
+				std::vector<ftl::Task> tasks(chunkCount);
+				for (int i = 0; i < chunkCount; i++)
+				{
+					auto argTuple = std::make_tuple(view, i, job, counterIndex);
+					int bufferIndex = currentBufferIndex.fetch_add(sizeof(argTuple));
+					uint8_t* buffer = &argBuffer[bufferIndex];
+					memcpy(buffer, &argTuple, sizeof(argTuple));
+
+					tasks[i].ArgData = buffer;
+					tasks[i].Function = Scheduler::createTaskFunction<Fn, Ts...>();
+				}
+				taskScheduler.AddTasks(chunkCount, tasks.data(), &countersRunning[counterIndex]);
+			}
+			taskScheduler.WaitForCounter(&countersRunning[counterIndex], 0, false);
 		}
 
 		template <class Fn, class... Ts>
@@ -120,7 +188,7 @@ namespace ecs
 			return index;
 		}
 
-		void waitAll()
+		void waitAll(Ecs* ecs)
 		{
 			int counterCount = currentCounterIndex;
 			taskScheduler.WaitForCounter(&mainCounter, 0, true);
@@ -131,6 +199,8 @@ namespace ecs
 
 			currentCounterIndex = 0;
 			currentBufferIndex = 0;
+
+			ecs->executeCommmandBuffer();
 		}
 
 		ftl::TaskScheduler taskScheduler;

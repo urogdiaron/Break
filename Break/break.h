@@ -160,6 +160,7 @@ struct Globals
     sf::CircleShape circlePrototype;
     sf::RenderStates renderState;
 
+    std::mutex ballCollisionMtx;
     std::vector<BallCollision> ballCollisions;
 
     std::mutex tilesMtx;
