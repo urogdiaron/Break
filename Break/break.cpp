@@ -292,6 +292,7 @@ void create_tile_references_for_new_entities()
         insert_into_tiles(id, pos, size, tileRef);
         v.addComponent<TileReference>(id, tileRef);
     }
+    getEcs().executeCommmandBuffer();
 }
 
 void clear_tile_references_for_deleted_entities()
@@ -304,6 +305,7 @@ void clear_tile_references_for_deleted_entities()
         update_tiles_for_deletion(id, tileReference);
         v.deleteComponents<TileReference>(id);
     }
+    getEcs().executeCommmandBuffer();
 }
 
 void setup_level(GameState& gamestate)
@@ -336,7 +338,7 @@ void setup_level(GameState& gamestate)
 		for (int i = 0; i < columns; i++)
 		{
             Brick::Type brickType = Brick::Type::Simple;
-            int random = rand() % 3;
+            int random = rand() % 1;
             if (random == 0)
             {
                 brickType = Brick::Type::Ballspawner;
@@ -370,6 +372,7 @@ void spawn_ball_on_paddle()
         Position{ ballPosition },
         AttachedToPaddle{ paddleId, vec(0.0f, size.y * 0.5f + Globals::ballRadius)
     });
+    getEcs().executeCommmandBuffer();
 }
 
 void fire_ball()
@@ -380,44 +383,6 @@ void fire_ball()
         (vec&)vel = vec_normalize(vec{ 1,1 }) * Globals::ballStartingSpeed;
         view.deleteComponents<AttachedToPaddle>(id);
     }
-}
-
-struct PositionByVelocitySystem
-{
-    PositionByVelocitySystem()
-    {
-    }
-
-    static void setupTasks(ecs::Ecs* ecs, ecs::Scheduler* scheduler, int counterIndex)
-    {
-        {
-            auto view1 = ecs::View<Position, const Velocity, TileReference>(*ecs).exclude<AttachedToPaddle>();
-            scheduler->addTask(counterIndex, &view1,
-                [dt = g_Globals.elapsedTime](auto& it, auto& id, auto& pos, auto& vel, auto& tileRef)
-            {
-                if (vel.x == 0.0f && vel.y == 0.0)
-                    return;
-
-                auto oldPos = pos;
-                pos += vel * dt;
-                update_tiles_after_move(id, oldPos, pos, Size(Globals::ballRadius, Globals::ballRadius), tileRef);
-            });
-        }
-
-        {
-            auto view2 = ecs::View<Position, const Velocity>(*ecs).exclude<AttachedToPaddle, TileReference>();
-            scheduler->addTask(counterIndex, &view2,
-                [dt = g_Globals.elapsedTime](auto& it, auto& id, auto& pos, auto& vel)
-            {
-                pos += vel * dt;
-            });
-        }
-    }
-};
-
-void update_positions_by_velocities(ecs::Ecs* ecs, typename ecs::Scheduler* scheduler, int systemGroupIndex)
-{
-    scheduler->setupTasks(ecs, systemGroupIndex, PositionByVelocitySystem::setupTasks);
 }
 
 void update_paddle_by_mouse()
@@ -450,19 +415,49 @@ void update_balls_attached_to_paddle()
     }
 }
 
-void update_ball_collisions_tiled(ecs::Ecs* ecs, typename ecs::Scheduler* scheduler, int systemGroupIndex)
+struct PositionByVelocitySystem : public ecs::System
 {
-    g_Globals.ballCollisions.clear();
-    auto fnSetupTasks = [](ecs::Ecs* ecs, typename ecs::Scheduler* scheduler, int counterIndex)
+    void scheduleJobs() override
+    {
+        auto updateTiledPositionsJob = ecs::Job(
+            ecs::View<Position, const Velocity, TileReference>(*ecs).exclude<AttachedToPaddle>(),
+            [dt = g_Globals.elapsedTime](auto& it, auto& id, auto& pos, auto& vel, auto& tileRef)
+        {
+            if (vel.x == 0.0f && vel.y == 0.0)
+                return;
+
+            auto oldPos = pos;
+            pos += vel * dt;
+            update_tiles_after_move(id, oldPos, pos, Size(Globals::ballRadius, Globals::ballRadius), tileRef);
+        });
+
+        ScheduleJob(updateTiledPositionsJob, "updateTiledPositions");
+
+        auto updateSimpleJob = ecs::Job(
+            ecs::View<Position, const Velocity>(*ecs).exclude<AttachedToPaddle, TileReference>(),
+            [dt = g_Globals.elapsedTime](auto& it, auto& id, auto& pos, auto& vel)
+        {
+            pos += vel * dt;
+        });
+        ScheduleJob(updateSimpleJob, "updateSimple");
+    }
+};
+
+struct UpdateBallCollisionsTiled : public ecs::System
+{
+    void scheduleJobs() override
     {
         int tileCountX = get_tile_count_x();
         int tileCountY = get_tile_count_y();
 
-        auto ballView = ecs::View<Position, TileReference>(*ecs).with<Ball>();
-        scheduler->addTask(counterIndex, &ballView,
+        g_Globals.ballCollisions.clear();
+
+        auto job = ecs::Job(
+            ecs::View<Position, TileReference>(*ecs).with<Ball>(),
             [&](auto& it, auto& ballId, auto& ballPos, auto& ballTileRef)
             {
                 bool leftEdge = false, rightEdge = false, topEdge = false, bottomEdge = false;
+                size_t tileCount = ballTileRef.tiles.size();
                 for (auto [x, y] : ballTileRef.tiles)
                 {
                     if (x == 0)
@@ -475,9 +470,9 @@ void update_ball_collisions_tiled(ecs::Ecs* ecs, typename ecs::Scheduler* schedu
                         topEdge = true;
                 }
 
-                if (bottomEdge && ballPos.y < 0)
+                if (!tileCount || (bottomEdge && ballPos.y < 0))
                 {   // Ball dies
-                    ballView.deleteEntity(ballId);
+                    it.getView()->deleteEntity(ballId);
                     return;
                 }
 
@@ -533,7 +528,7 @@ void update_ball_collisions_tiled(ecs::Ecs* ecs, typename ecs::Scheduler* schedu
                             ballCollision.otherObjectId = brickId;
                             if (hasBrick)
                             {
-                                ballView.addComponent<CollidedWithBall>(brickId);
+                                it.getView()->addComponent<CollidedWithBall>(brickId);
                             }
                             else if (hasPaddle)
                             {
@@ -549,10 +544,10 @@ void update_ball_collisions_tiled(ecs::Ecs* ecs, typename ecs::Scheduler* schedu
                     }
                 }
             });
-    };
 
-    scheduler->setupTasks(ecs, systemGroupIndex, fnSetupTasks);
-}
+        ScheduleJob(job, "updateBallCollisions");
+    }
+};
 
 void resolve_ball_collisions()
 {
@@ -588,6 +583,7 @@ void handle_brick_collisions()
         }
         brickView.deleteEntity(brickId);
     }
+    getEcs().executeCommmandBuffer();
 }
 
 bool has_balls_in_play()
@@ -774,42 +770,40 @@ void update_camera_move()
     }
 }
 
-void update_ball_trail_particles(ecs::Ecs* ecs, typename ecs::Scheduler* scheduler, int systemGroupIndex)
+struct UpdateBallTrailParticles : public ecs::System 
 {
-    EASY_FUNCTION();
-    auto fnSetupTasks = [](ecs::Ecs* ecs, typename ecs::Scheduler* scheduler, int counterIndex)
+    void scheduleJobs() override
     {
         float elapsedTime = g_Globals.elapsedTime;
         float emitterInterval = 0.01f;
 
-        {
-            auto v = ecs::View<const Position, ParticleEmitter>(getEcs()).exclude<AttachedToPaddle>();
-            scheduler->addTask(counterIndex, &v,
-                [&](auto& it, auto& id, auto& pos, auto& emitter)
+        auto emitJob = ecs::Job(
+            ecs::View<const Position, ParticleEmitter>(*ecs).exclude<AttachedToPaddle>(),
+            [&](auto& it, auto& id, auto& pos, auto& emitter)
+            {
+                emitter.timeUntilNextEmit -= elapsedTime;
+                if (emitter.timeUntilNextEmit < 0.0f)
                 {
-                    emitter.timeUntilNextEmit -= elapsedTime;
-                    if (emitter.timeUntilNextEmit < 0.0f)
-                    {
-                        emitter.timeUntilNextEmit = emitterInterval;
-                        v.createEntity(g_Globals.prefabs.particle, pos);
-                    }
-                });
-        }
+                    emitter.timeUntilNextEmit = emitterInterval;
+                    it.getView()->createEntity(g_Globals.prefabs.particle, pos);
+                }
+            }
+        );
 
-        {
-            auto v = ecs::View<Particle>(getEcs());
-            scheduler->addTask(counterIndex, &v,
-                [&](auto& it, auto& id, auto& particle)
-                {
-                    particle.timeToLive -= elapsedTime;
-                    if (particle.timeToLive < 0.0f)
-                        v.deleteEntity(id);
-                });
-        }
-    };
+        ScheduleJob(emitJob, "emitParticles");
 
-    scheduler->setupTasks(ecs, systemGroupIndex, fnSetupTasks);
-}
+        auto updateParticlesJob = ecs::Job(
+            ecs::View<Particle>(*ecs),
+            [&](auto& it, auto& id, auto& particle)
+            {
+                particle.timeToLive -= elapsedTime;
+                if (particle.timeToLive < 0.0f)
+                    it.getView()->deleteEntity(id);
+            }
+        );
+        ScheduleJob(updateParticlesJob, "updateParticles");
+    }
+};
 
 void update()
 {
@@ -822,22 +816,16 @@ void update()
     update_ball_magnet();
     fix_up_horizontal_ball_velocities();
 
-    auto fnSetupGroup_UpdateTiled = [](ecs::Ecs* ecs, typename ecs::Scheduler* scheduler, int systemGroupIndex)
     {
-        update_positions_by_velocities(ecs, scheduler, systemGroupIndex);
-        update_ball_collisions_tiled(ecs, scheduler, systemGroupIndex);
-    };
+        scheduleCounter_UpdateMovement = scheduler.createCounter();
+        scheduleCounter_UpdateParticles = scheduler.createCounter();
 
-    auto fnSetupGroup_UpdateParticles = [](ecs::Ecs* ecs, typename ecs::Scheduler* scheduler, int systemGroupIndex)
-    {
-        update_ball_trail_particles(ecs, scheduler, systemGroupIndex);
-    };
-
-    {
         EASY_BLOCK("Adding system groups");
-        scheduler.setupSystemGroup(&getEcs(), fnSetupGroup_UpdateTiled);
-        scheduler.setupSystemGroup(&getEcs(), fnSetupGroup_UpdateParticles);
+        scheduler.scheduleSystem<PositionByVelocitySystem>(&getEcs(), scheduleCounter_UpdateMovement);
+        scheduler.scheduleSystem<UpdateBallCollisionsTiled>(&getEcs(), scheduleCounter_UpdateMovement);
+        scheduler.scheduleSystem<UpdateBallTrailParticles>(&getEcs(), scheduleCounter_UpdateParticles);
     }
+    scheduler.runSystems();
     scheduler.waitAll(&getEcs());
 
     resolve_ball_collisions();
@@ -848,6 +836,12 @@ void update()
 
 
     clear_tile_references_for_deleted_entities();
+
+    ecs::View<> deletedEntites(getEcs());
+    if (deletedEntites.with<ecs::DeletedEntity>().getCount())
+    {
+        printf("Deleted entites are still in this fucking game!");
+    }
 
     sf::Time elapsedTime = clock.restart();
     g_Globals.gamelogicUpdateTime = elapsedTime.asSeconds();
