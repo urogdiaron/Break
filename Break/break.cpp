@@ -286,7 +286,7 @@ void create_tile_references_for_new_entities()
     EASY_FUNCTION();
     auto& ecs = getEcs();
     auto v = ecs::View<Position, Size, TileReferenceCreator>(ecs).exclude<TileReference>();
-    for (auto& [it, id, pos, size, tileReferenceCreator] : v)
+    for (auto& [id, pos, size, tileReferenceCreator] : v)
     {
         TileReference tileRef{ tileReferenceCreator.isBall };
         insert_into_tiles(id, pos, size, tileRef);
@@ -300,7 +300,7 @@ void clear_tile_references_for_deleted_entities()
     EASY_FUNCTION();
     auto& ecs = getEcs();
     auto v = ecs::View<TileReference>(ecs).exclude<TileReferenceCreator>();
-    for (auto& [it, id, tileReference] : v)
+    for (auto& [id, tileReference] : v)
     {
         update_tiles_for_deletion(id, tileReference);
         v.deleteComponents<TileReference>(id);
@@ -365,7 +365,7 @@ void spawn_ball_on_paddle()
     if (itPaddle == paddleView.end())
         return;
 
-    auto& [it, paddleId, pos, size] = *itPaddle;
+    auto& [paddleId, pos, size] = *itPaddle;
     vec ballPosition = pos + vec(0.0f, size.y * 0.5f + Globals::ballRadius);
 
     ecs::entityId ballId = ecs.createEntity(g_Globals.prefabs.attachedBall,
@@ -378,7 +378,7 @@ void spawn_ball_on_paddle()
 void fire_ball()
 {
     auto view = ecs::View<Velocity>(getEcs()).with<Ball, AttachedToPaddle>();
-    for (auto& [it, id, vel] : view)
+    for (auto& [id, vel] : view)
     {
         (vec&)vel = vec_normalize(vec{ 1,1 }) * Globals::ballStartingSpeed;
         view.deleteComponents<AttachedToPaddle>(id);
@@ -390,7 +390,7 @@ void update_paddle_by_mouse()
     EASY_FUNCTION();
     vec mousePosition{ sf::Mouse::getPosition(g_Globals.window) };
     float screenSizeX = g_Globals.screenSize.x;
-    for (auto& [it, id, pos, size, tileRef] : ecs::View<Position, Size, TileReference>(getEcs()).with<Paddle>())
+    for (auto& [id, pos, size, tileRef] : ecs::View<Position, Size, TileReference>(getEcs()).with<Paddle>())
     {
         auto oldPos = pos;
         pos.x = mousePosition.x;
@@ -404,7 +404,7 @@ void update_balls_attached_to_paddle()
 {
     EASY_FUNCTION();
     auto& ecs = getEcs();
-    for (auto& [it, id, pos, tileRef, attach] : ecs::View<Position, TileReference, const AttachedToPaddle>(ecs))
+    for (auto& [id, pos, tileRef, attach] : ecs::View<Position, TileReference, const AttachedToPaddle>(ecs))
     {
         auto paddlePos = ecs.getComponent<Position>(attach.paddleId);
         if (!paddlePos)
@@ -419,28 +419,38 @@ struct PositionByVelocitySystem : public ecs::System
 {
     void scheduleJobs() override
     {
-        auto updateTiledPositionsJob = ecs::Job(
-            ecs::View<Position, const Velocity, TileReference>(*ecs).exclude<AttachedToPaddle>(),
-            [dt = g_Globals.elapsedTime](auto& it, auto& id, auto& pos, auto& vel, auto& tileRef)
+        float dt = g_Globals.elapsedTime;
+
+        auto updateTiledPositions = ecs::Job(
+            ecs->view<Position, const Velocity, const Size, TileReference>().exclude<AttachedToPaddle>()
+        );
+
+        JOB_SET_FN(updateTiledPositions)
         {
+            auto& [id, pos, vel, size, tileRef] = *it;
             if (vel.x == 0.0f && vel.y == 0.0)
                 return;
 
             auto oldPos = pos;
             pos += vel * dt;
             update_tiles_after_move(id, oldPos, pos, Size(Globals::ballRadius, Globals::ballRadius), tileRef);
-        });
+        };
 
-        ScheduleJob(updateTiledPositionsJob, "updateTiledPositions");
+        scheduleJob(updateTiledPositions, "updateTiledPositions");
 
         auto updateSimpleJob = ecs::Job(
-            ecs::View<Position, const Velocity>(*ecs).exclude<AttachedToPaddle, TileReference>(),
-            [dt = g_Globals.elapsedTime](auto& it, auto& id, auto& pos, auto& vel)
+            ecs::View<Position, const Velocity>(*ecs).exclude<AttachedToPaddle, TileReference>()
+        );
+
+        JOB_SET_FN(updateSimpleJob)
         {
+            auto& [id, pos, vel] = *it;
             pos += vel * dt;
-        });
-        ScheduleJob(updateSimpleJob, "updateSimple");
+        };
+
+        scheduleJob(updateSimpleJob, "updateSimple");
     }
+
 };
 
 struct UpdateBallCollisionsTiled : public ecs::System
@@ -453,99 +463,103 @@ struct UpdateBallCollisionsTiled : public ecs::System
         g_Globals.ballCollisions.clear();
 
         auto job = ecs::Job(
-            ecs::View<Position, TileReference>(*ecs).with<Ball>(),
-            [&](auto& it, auto& ballId, auto& ballPos, auto& ballTileRef)
+            ecs->view<Position, TileReference>().with<Ball>()
+        );
+
+        JOB_SET_FN(job)
+        {
+            auto& [ballId, ballPos, ballTileRef] = *it;
+
+            bool leftEdge = false, rightEdge = false, topEdge = false, bottomEdge = false;
+            size_t tileCount = ballTileRef.tiles.size();
+            for (auto [x, y] : ballTileRef.tiles)
             {
-                bool leftEdge = false, rightEdge = false, topEdge = false, bottomEdge = false;
-                size_t tileCount = ballTileRef.tiles.size();
-                for (auto [x, y] : ballTileRef.tiles)
-                {
-                    if (x == 0)
-                        leftEdge = true;
-                    if (x == tileCountX - 1)
-                        rightEdge = true;
-                    if (y == 0)
-                        bottomEdge = true;
-                    if (y == tileCountY - 1)
-                        topEdge = true;
-                }
+                if (x == 0)
+                    leftEdge = true;
+                if (x == tileCountX - 1)
+                    rightEdge = true;
+                if (y == 0)
+                    bottomEdge = true;
+                if (y == tileCountY - 1)
+                    topEdge = true;
+            }
 
-                if (!tileCount || (bottomEdge && ballPos.y < 0))
-                {   // Ball dies
-                    it.getView()->deleteEntity(ballId);
-                    return;
-                }
+            if (!tileCount || (bottomEdge && ballPos.y < 0))
+            {   // Ball dies
+                it.getView()->deleteEntity(ballId);
+                return;
+            }
 
-                if (leftEdge && ballPos.x - Globals::ballRadius < 0)
-                {
-                    BallCollision ballCollision;
-                    ballCollision.ballId = ballId;
-                    ballCollision.otherObjectId = 0;
-                    ballCollision.overlap.penetration = -(ballPos.x - Globals::ballRadius);
-                    ballCollision.overlap.collisionPoint = vec(0, ballPos.y);
-                    ballCollision.overlap.normal = vec(1, 0);
-                    g_Globals.ballCollisionMtx.lock();
-                    g_Globals.ballCollisions.push_back(ballCollision);
-                    g_Globals.ballCollisionMtx.unlock();
-                }
-                if (rightEdge && ballPos.x + Globals::ballRadius > g_Globals.screenSize.x)
-                {
-                    BallCollision ballCollision;
-                    ballCollision.ballId = ballId;
-                    ballCollision.otherObjectId = 0;
-                    ballCollision.overlap.penetration = ballPos.x + Globals::ballRadius - g_Globals.screenSize.x;
-                    ballCollision.overlap.collisionPoint = vec(g_Globals.screenSize.x, ballPos.y);
-                    ballCollision.overlap.normal = vec(-1, 0);
-                    g_Globals.ballCollisionMtx.lock();
-                    g_Globals.ballCollisions.push_back(ballCollision);
-                    g_Globals.ballCollisionMtx.unlock();
-                }
-                if (topEdge && ballPos.y + Globals::ballRadius > g_Globals.screenSize.y)
-                {
-                    BallCollision ballCollision;
-                    ballCollision.ballId = ballId;
-                    ballCollision.otherObjectId = 0;
-                    ballCollision.overlap.penetration = ballPos.y + Globals::ballRadius - g_Globals.screenSize.y;
-                    ballCollision.overlap.collisionPoint = vec(ballPos.x, g_Globals.screenSize.y);
-                    ballCollision.overlap.normal = vec(0, -1);
-                    g_Globals.ballCollisionMtx.lock();
-                    g_Globals.ballCollisions.push_back(ballCollision);
-                    g_Globals.ballCollisionMtx.unlock();
-                }
+            if (leftEdge && ballPos.x - Globals::ballRadius < 0)
+            {
+                BallCollision ballCollision;
+                ballCollision.ballId = ballId;
+                ballCollision.otherObjectId = 0;
+                ballCollision.overlap.penetration = -(ballPos.x - Globals::ballRadius);
+                ballCollision.overlap.collisionPoint = vec(0, ballPos.y);
+                ballCollision.overlap.normal = vec(1, 0);
+                g_Globals.ballCollisionMtx.lock();
+                g_Globals.ballCollisions.push_back(ballCollision);
+                g_Globals.ballCollisionMtx.unlock();
+            }
+            if (rightEdge && ballPos.x + Globals::ballRadius > g_Globals.screenSize.x)
+            {
+                BallCollision ballCollision;
+                ballCollision.ballId = ballId;
+                ballCollision.otherObjectId = 0;
+                ballCollision.overlap.penetration = ballPos.x + Globals::ballRadius - g_Globals.screenSize.x;
+                ballCollision.overlap.collisionPoint = vec(g_Globals.screenSize.x, ballPos.y);
+                ballCollision.overlap.normal = vec(-1, 0);
+                g_Globals.ballCollisionMtx.lock();
+                g_Globals.ballCollisions.push_back(ballCollision);
+                g_Globals.ballCollisionMtx.unlock();
+            }
+            if (topEdge && ballPos.y + Globals::ballRadius > g_Globals.screenSize.y)
+            {
+                BallCollision ballCollision;
+                ballCollision.ballId = ballId;
+                ballCollision.otherObjectId = 0;
+                ballCollision.overlap.penetration = ballPos.y + Globals::ballRadius - g_Globals.screenSize.y;
+                ballCollision.overlap.collisionPoint = vec(ballPos.x, g_Globals.screenSize.y);
+                ballCollision.overlap.normal = vec(0, -1);
+                g_Globals.ballCollisionMtx.lock();
+                g_Globals.ballCollisions.push_back(ballCollision);
+                g_Globals.ballCollisionMtx.unlock();
+            }
 
-                for (auto [x, y] : ballTileRef.tiles)
+            for (auto [x, y] : ballTileRef.tiles)
+            {
+                for (auto brickId : g_Globals.tilesBricks[y * tileCountX + x].ids)
                 {
-                    for (auto brickId : g_Globals.tilesBricks[y * tileCountX + x].ids)
+                    auto [brickPos, brickSize] = ecs->getComponents<Position, Size>(brickId);
+                    BallCollision ballCollision;
+                    bool overlap = test_circle_aabb_overlap(ballCollision.overlap, ballPos, Globals::ballRadius, *brickPos - *brickSize * 0.5f, *brickPos + *brickSize * 0.5f, false);
+                    if (overlap)
                     {
-                        auto [brickPos, brickSize] = ecs->getComponents<Position, Size>(brickId);
-                        BallCollision ballCollision;
-                        bool overlap = test_circle_aabb_overlap(ballCollision.overlap, ballPos, Globals::ballRadius, *brickPos - *brickSize * 0.5f, *brickPos + *brickSize * 0.5f, false);
-                        if (overlap)
-                        {
-                            auto [hasBrick, hasPaddle] = ecs->hasEachComponent<Brick, Paddle>(brickId);
+                        auto [hasBrick, hasPaddle] = ecs->hasEachComponent<Brick, Paddle>(brickId);
 
-                            ballCollision.ballId = ballId;
-                            ballCollision.otherObjectId = brickId;
-                            if (hasBrick)
-                            {
-                                it.getView()->addComponent<CollidedWithBall>(brickId);
-                            }
-                            else if (hasPaddle)
-                            {
-                                float toBall = ballPos.x - brickPos->x;
-                                toBall /= brickSize->x;
-                                ballCollision.overlap.normal.x = lerp(0.0f, 0.9f, toBall);
-                                ballCollision.overlap.normal = vec_normalize(ballCollision.overlap.normal);
-                            }
-                            g_Globals.ballCollisionMtx.lock();
-                            g_Globals.ballCollisions.push_back(ballCollision);
-                            g_Globals.ballCollisionMtx.unlock();
+                        ballCollision.ballId = ballId;
+                        ballCollision.otherObjectId = brickId;
+                        if (hasBrick)
+                        {
+                            it.getView()->addComponent<CollidedWithBall>(brickId);
                         }
+                        else if (hasPaddle)
+                        {
+                            float toBall = ballPos.x - brickPos->x;
+                            toBall /= brickSize->x;
+                            ballCollision.overlap.normal.x = lerp(0.0f, 0.9f, toBall);
+                            ballCollision.overlap.normal = vec_normalize(ballCollision.overlap.normal);
+                        }
+                        g_Globals.ballCollisionMtx.lock();
+                        g_Globals.ballCollisions.push_back(ballCollision);
+                        g_Globals.ballCollisionMtx.unlock();
                     }
                 }
-            });
+            }
+        };
 
-        ScheduleJob(job, "updateBallCollisions");
+        scheduleJob(job, "updateBallCollisions");
     }
 };
 
@@ -573,7 +587,7 @@ void handle_brick_collisions()
     EASY_FUNCTION();
     auto& ecs = getEcs();
     auto brickView = ecs::View<Position, Size, TileReference, Brick>(ecs);
-    for (auto& [it, brickId, pos, size, tileRef, brick] : brickView.with<CollidedWithBall>())
+    for (auto& [brickId, pos, size, tileRef, brick] : brickView.with<CollidedWithBall>())
     {
         if (brick.type == Brick::Type::Ballspawner)
         {
@@ -614,14 +628,14 @@ void update_visibility()
     };
 
     auto v1 = ecs::View<const Position, const Size>(getEcs()).with<Visible>();
-    for (auto& [it, id, pos, size] : v1)
+    for (auto& [id, pos, size] : v1)
     {
         if (!fnIsVisible(pos, size))
             v1.deleteComponents<Visible>(id);
     }
 
     auto v2 = ecs::View<const Position, const Size>(getEcs()).exclude<Visible>();
-    for (auto& [it, id, pos, size] : v2)
+    for (auto& [id, pos, size] : v2)
     {
         if (fnIsVisible(pos, size))
             v2.addComponent<Visible>(id);
@@ -634,8 +648,10 @@ void render_sprites()
     Sprite usedSpriteDesc;
     vec sizeCorrection = { 1.0f, 1.0f };
 
-    for (auto& [it, id, pos, size] : ecs::View<Position, Size>(getEcs()).with<Visible, Sprite>())
+    auto view = ecs::View<Position, Size>(getEcs()).with<Visible, Sprite>();
+    for (auto it = view.begin(); it != view.end(); ++it)
     {
+        auto& [id, pos, size] = *it;
         auto& currentSpriteDesc = *it.getSharedComponent<Sprite>();
 
         if (!ecs::equals(usedSpriteDesc, currentSpriteDesc))
@@ -661,7 +677,7 @@ void render_tile_debug()
 {
     ecs::entityId ballId = 0;
     auto& ecs = getEcs();
-    for (auto& [it, id, ball] : ecs::View<Ball>(ecs))
+    for (auto& [id, ball] : ecs::View<Ball>(ecs))
     {
         ballId = id;
         break;
@@ -691,9 +707,9 @@ void update_ball_magnet()
     }
 
     auto& ecs = getEcs();
-    for (auto& [it, paddleId, paddlePos] : ecs::View<const Position>(ecs).with<Paddle>())
+    for (auto& [paddleId, paddlePos] : ecs::View<const Position>(ecs).with<Paddle>())
     {
-        for (auto& [it, ballId, ballPos, ballVelocity] : ecs::View<const Position, Velocity>(ecs).with<Ball>())
+        for (auto& [ballId, ballPos, ballVelocity] : ecs::View<const Position, Velocity>(ecs).with<Ball>())
         {
             vec toPaddle = paddlePos - ballPos;
             vec toPaddleDir = vec_normalize(toPaddle);
@@ -720,7 +736,7 @@ void update_ball_magnet()
 void fix_up_horizontal_ball_velocities()
 {
     EASY_FUNCTION();
-    for (auto& [it, ballId, ballVelocity] : ecs::View<Velocity>(getEcs()).with<Ball>())
+    for (auto& [ballId, ballVelocity] : ecs::View<Velocity>(getEcs()).with<Ball>())
     {
         if (fabsf(ballVelocity.y) < 15)
         {
@@ -778,30 +794,35 @@ struct UpdateBallTrailParticles : public ecs::System
         float emitterInterval = 0.01f;
 
         auto emitJob = ecs::Job(
-            ecs::View<const Position, ParticleEmitter>(*ecs).exclude<AttachedToPaddle>(),
-            [&](auto& it, auto& id, auto& pos, auto& emitter)
-            {
-                emitter.timeUntilNextEmit -= elapsedTime;
-                if (emitter.timeUntilNextEmit < 0.0f)
-                {
-                    emitter.timeUntilNextEmit = emitterInterval;
-                    it.getView()->createEntity(g_Globals.prefabs.particle, pos);
-                }
-            }
+            ecs::View<const Position, ParticleEmitter>(*ecs).exclude<AttachedToPaddle>()
         );
 
-        ScheduleJob(emitJob, "emitParticles");
+        JOB_SET_FN(emitJob)
+        {
+            auto& [id, pos, emitter] = *it;
+
+            emitter.timeUntilNextEmit -= elapsedTime;
+            if (emitter.timeUntilNextEmit < 0.0f)
+            {
+                emitter.timeUntilNextEmit = emitterInterval;
+                it.getView()->createEntity(g_Globals.prefabs.particle, pos);
+            }
+        };
+
+        scheduleJob(emitJob, "emitParticles");
 
         auto updateParticlesJob = ecs::Job(
-            ecs::View<Particle>(*ecs),
-            [&](auto& it, auto& id, auto& particle)
-            {
-                particle.timeToLive -= elapsedTime;
-                if (particle.timeToLive < 0.0f)
-                    it.getView()->deleteEntity(id);
-            }
+            ecs::View<Particle>(*ecs)
         );
-        ScheduleJob(updateParticlesJob, "updateParticles");
+
+        JOB_SET_FN(updateParticlesJob)
+        {
+            auto& [id, particle] = *it;
+            particle.timeToLive -= elapsedTime;
+            if (particle.timeToLive < 0.0f)
+                it.getView()->deleteEntity(id);
+        };
+        scheduleJob(updateParticlesJob, "updateParticles");
     }
 };
 

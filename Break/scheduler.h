@@ -43,7 +43,7 @@ namespace ecs
 
 				for (auto it = view->beginForChunk(iChunk); it != view->endForChunk(); ++it)
 				{
-					std::apply(job, *it);
+					job(it);
 				}
 
 				EASY_END_BLOCK;
@@ -123,23 +123,25 @@ namespace ecs
 	template<class... Ts>
 	struct Job
 	{
-		template<class Fn>
-		Job(View<Ts...>&& view, Fn&& jobFunction)
+		using Arg = View<Ts...>::iterator<true>;
+
+		Job(View<Ts...>&& view)
 			: view(std::move(view))
-			, fn(jobFunction)
 		{
 		}
 
-		std::function<void(const View<Ts...>::iterator<true>&, const entityId&, Ts&...)> fn;
+		std::function<void(const Arg&)> fn;
 		View<Ts...> view;
 	};
+
+#define JOB_SET_FN(jobVariable) jobVariable.fn = [&](const decltype(jobVariable)::Arg& it)
 
 	struct System
 	{
 		virtual void scheduleJobs() = 0;
 
 		template<class... Ts>
-		void ScheduleJob(Job<Ts...>& job, const char* name = "")
+		void scheduleJob(Job<Ts...>& job, const char* name = "")
 		{
 			scheduler->addTask(systemIndex, &job.view, std::move(job.fn), name);
 		}
