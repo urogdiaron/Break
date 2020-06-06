@@ -3,9 +3,6 @@
 #include <fstream>
 
 Globals g_Globals;
-ecs::Scheduler scheduler;
-int scheduleCounter_UpdateMovement;
-int scheduleCounter_UpdateParticles;
 
 bool g_debugBall = false;
 
@@ -43,6 +40,11 @@ void render_circle(vec center, float radius, sf::Color color = sf::Color::White)
 ecs::Ecs& getEcs()
 {
     return g_Globals.ecs;
+}
+
+ecs::Scheduler& getScheduler()
+{
+    return g_Globals.scheduler;
 }
 
 int get_tile_count_x()
@@ -281,19 +283,21 @@ void update_tiles_for_deletion(ecs::entityId id, const TileReference& tileRef)
     }
 }
 
-void create_tile_references_for_new_entities()
+struct CreateTileReferencesForNewEntities : public ecs::System
 {
-    EASY_FUNCTION();
-    auto& ecs = getEcs();
-    auto v = ecs::View<Position, Size, TileReferenceCreator>(ecs).exclude<TileReference>();
-    for (auto& [id, pos, size, tileReferenceCreator] : v)
+    void scheduleJobs() override
     {
-        TileReference tileRef{ tileReferenceCreator.isBall };
-        insert_into_tiles(id, pos, size, tileRef);
-        v.addComponent<TileReference>(id, tileRef);
+        auto createTileReferences = ecs::Job(ecs->view<Position, Size, TileReferenceCreator>().exclude<TileReference>());
+        JOB_SET_FN(createTileReferences)
+        {
+            auto& [id, pos, size, tileReferenceCreator] = *it;
+            TileReference tileRef{ tileReferenceCreator.isBall };
+            insert_into_tiles(id, pos, size, tileRef);
+            it.getView()->addComponent<TileReference>(id, tileRef);
+        };
+        JOB_SCHEDULE(createTileReferences);
     }
-    getEcs().executeCommmandBuffer();
-}
+};
 
 void clear_tile_references_for_deleted_entities()
 {
@@ -421,10 +425,7 @@ struct PositionByVelocitySystem : public ecs::System
     {
         float dt = g_Globals.elapsedTime;
 
-        auto updateTiledPositions = ecs::Job(
-            ecs->view<Position, const Velocity, const Size, TileReference>().exclude<AttachedToPaddle>()
-        );
-
+        auto updateTiledPositions = ecs::Job(ecs->view<Position, const Velocity, const Size, TileReference>().exclude<AttachedToPaddle>());
         JOB_SET_FN(updateTiledPositions)
         {
             auto& [id, pos, vel, size, tileRef] = *it;
@@ -435,20 +436,16 @@ struct PositionByVelocitySystem : public ecs::System
             pos += vel * dt;
             update_tiles_after_move(id, oldPos, pos, Size(Globals::ballRadius, Globals::ballRadius), tileRef);
         };
+        JOB_SCHEDULE(updateTiledPositions);
 
-        scheduleJob(updateTiledPositions, "updateTiledPositions");
 
-        auto updateSimpleJob = ecs::Job(
-            ecs::View<Position, const Velocity>(*ecs).exclude<AttachedToPaddle, TileReference>()
-        );
-
-        JOB_SET_FN(updateSimpleJob)
+        auto updateSimple = ecs::Job(ecs::View<Position, const Velocity>(*ecs).exclude<AttachedToPaddle, TileReference>());
+        JOB_SET_FN(updateSimple)
         {
             auto& [id, pos, vel] = *it;
             pos += vel * dt;
         };
-
-        scheduleJob(updateSimpleJob, "updateSimple");
+        JOB_SCHEDULE(updateSimple);
     }
 
 };
@@ -462,11 +459,8 @@ struct UpdateBallCollisionsTiled : public ecs::System
 
         g_Globals.ballCollisions.clear();
 
-        auto job = ecs::Job(
-            ecs->view<Position, TileReference>().with<Ball>()
-        );
-
-        JOB_SET_FN(job)
+        auto updateBallCollisions = ecs::Job(ecs->view<Position, TileReference>().with<Ball>());
+        JOB_SET_FN(updateBallCollisions)
         {
             auto& [ballId, ballPos, ballTileRef] = *it;
 
@@ -558,8 +552,7 @@ struct UpdateBallCollisionsTiled : public ecs::System
                 }
             }
         };
-
-        scheduleJob(job, "updateBallCollisions");
+        JOB_SCHEDULE(updateBallCollisions);
     }
 };
 
@@ -698,40 +691,45 @@ void render_tile_debug()
     }
 }
 
-void update_ball_magnet()
+struct UpdateBallMagnet : public ecs::System
 {
-    EASY_FUNCTION();
-    if (!sf::Mouse::isButtonPressed(sf::Mouse::Button::Right))
+    void scheduleJobs() override
     {
-        return;
-    }
-
-    auto& ecs = getEcs();
-    for (auto& [paddleId, paddlePos] : ecs::View<const Position>(ecs).with<Paddle>())
-    {
-        for (auto& [ballId, ballPos, ballVelocity] : ecs::View<const Position, Velocity>(ecs).with<Ball>())
+        if (!sf::Mouse::isButtonPressed(sf::Mouse::Button::Right))
         {
-            vec toPaddle = paddlePos - ballPos;
-            vec toPaddleDir = vec_normalize(toPaddle);
-            vec ballDir = vec_normalize(ballVelocity);
-            
-            float dot = vec_dot(ballDir, toPaddleDir);
-            bool ccw = vec_ccw(ballDir, toPaddleDir);
-
-            float angle = acosf(clamp(dot, -1.0f, 1.0f));
-            if (!ccw)
-                angle *= -1;
-
-            static float turnRate = 2.0f;
-            float maxAngle = g_Globals.elapsedTime * turnRate;
-            angle = clamp(angle, -maxAngle, maxAngle);
-
-            ballDir = vec_rotate(ballDir, angle);
-
-            (vec&)ballVelocity = ballDir * Globals::ballStartingSpeed;
+            return;
         }
+
+        auto updateBallMagnet = ecs::Job(ecs->view<const Position, Velocity>().with<Ball>());
+        JOB_SET_FN(updateBallMagnet)
+        {
+            auto& [ballId, ballPos, ballVelocity] = *it;
+            for (auto& [paddleId, paddlePos] : ecs->view<const Position>().with<Paddle>())
+            {
+                vec toPaddle = paddlePos - ballPos;
+                vec toPaddleDir = vec_normalize(toPaddle);
+                vec ballDir = vec_normalize(ballVelocity);
+
+                float dot = vec_dot(ballDir, toPaddleDir);
+                bool ccw = vec_ccw(ballDir, toPaddleDir);
+
+                float angle = acosf(clamp(dot, -1.0f, 1.0f));
+                if (!ccw)
+                    angle *= -1;
+
+                static float turnRate = 2.0f;
+                float maxAngle = g_Globals.elapsedTime * turnRate;
+                angle = clamp(angle, -maxAngle, maxAngle);
+
+                ballDir = vec_rotate(ballDir, angle);
+
+                (vec&)ballVelocity = ballDir * Globals::ballStartingSpeed;
+            }
+        };
+
+        JOB_SCHEDULE(updateBallMagnet);
     }
-}
+};
 
 void fix_up_horizontal_ball_velocities()
 {
@@ -786,17 +784,14 @@ void update_camera_move()
     }
 }
 
-struct UpdateBallTrailParticles : public ecs::System 
+struct UpdateBallTrailParticles : public ecs::System
 {
     void scheduleJobs() override
     {
         float elapsedTime = g_Globals.elapsedTime;
         float emitterInterval = 0.01f;
 
-        auto emitJob = ecs::Job(
-            ecs::View<const Position, ParticleEmitter>(*ecs).exclude<AttachedToPaddle>()
-        );
-
+        auto emitJob = ecs::Job(ecs->view<const Position, ParticleEmitter>().exclude<AttachedToPaddle>());
         JOB_SET_FN(emitJob)
         {
             auto& [id, pos, emitter] = *it;
@@ -808,13 +803,9 @@ struct UpdateBallTrailParticles : public ecs::System
                 it.getView()->createEntity(g_Globals.prefabs.particle, pos);
             }
         };
+        JOB_SCHEDULE(emitJob);
 
-        scheduleJob(emitJob, "emitParticles");
-
-        auto updateParticlesJob = ecs::Job(
-            ecs::View<Particle>(*ecs)
-        );
-
+        auto updateParticlesJob = ecs::Job(ecs->view<Particle>());
         JOB_SET_FN(updateParticlesJob)
         {
             auto& [id, particle] = *it;
@@ -822,7 +813,7 @@ struct UpdateBallTrailParticles : public ecs::System
             if (particle.timeToLive < 0.0f)
                 it.getView()->deleteEntity(id);
         };
-        scheduleJob(updateParticlesJob, "updateParticles");
+        JOB_SCHEDULE(updateParticlesJob);
     }
 };
 
@@ -830,31 +821,29 @@ void update()
 {
     EASY_FUNCTION();
     sf::Clock clock;
+    auto& scheduler = getScheduler();
 
-    create_tile_references_for_new_entities();
+    scheduler.scheduleSystem<CreateTileReferencesForNewEntities>();
+    scheduler.runSystems();
+
     update_paddle_by_mouse();
     update_balls_attached_to_paddle();
-    update_ball_magnet();
+    
+    scheduler.scheduleSystem<UpdateBallMagnet>();
+    scheduler.runSystems();
+
     fix_up_horizontal_ball_velocities();
 
-    {
-        scheduleCounter_UpdateMovement = scheduler.createCounter();
-        scheduleCounter_UpdateParticles = scheduler.createCounter();
-
-        EASY_BLOCK("Adding system groups");
-        scheduler.scheduleSystem<PositionByVelocitySystem>(&getEcs(), scheduleCounter_UpdateMovement);
-        scheduler.scheduleSystem<UpdateBallCollisionsTiled>(&getEcs(), scheduleCounter_UpdateMovement);
-        scheduler.scheduleSystem<UpdateBallTrailParticles>(&getEcs(), scheduleCounter_UpdateParticles);
-    }
+    int systemGroupMovement = scheduler.scheduleSystem<PositionByVelocitySystem>();
+    scheduler.scheduleSystem<UpdateBallCollisionsTiled>(systemGroupMovement);
+    scheduler.scheduleSystem<UpdateBallTrailParticles>(systemGroupMovement);
     scheduler.runSystems();
-    scheduler.waitAll(&getEcs());
 
     resolve_ball_collisions();
     handle_brick_collisions();
 
     update_ball_respawns();
     update_camera_move();
-
 
     clear_tile_references_for_deleted_entities();
 
@@ -986,7 +975,7 @@ int main()
                     g_Globals.timeMultipler = std::max(0.0f, g_Globals.timeMultipler + 0.1f);
                     break;
                 case sf::Keyboard::M:
-                    scheduler.singleThreadedMode = !scheduler.singleThreadedMode;
+                    getScheduler().singleThreadedMode = !getScheduler().singleThreadedMode;
                     break;
                 case sf::Keyboard::F5:
                     save_ecs();

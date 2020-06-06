@@ -152,6 +152,7 @@ struct Globals
     };
 
     ecs::Ecs ecs;
+    ecs::Scheduler scheduler = ecs::Scheduler(&ecs);
     GameState gameState;
     vec screenSize{ 800, 600 };
     sf::RenderWindow window{ sf::VideoMode{ (uint)screenSize.x, (uint)screenSize.y }, "Break" };

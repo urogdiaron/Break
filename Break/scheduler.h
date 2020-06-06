@@ -8,8 +8,9 @@ namespace ecs
 {
 	struct Scheduler
 	{
-		Scheduler()
-			: mainCounter(&taskScheduler)
+		Scheduler(Ecs* ecs)
+			: ecs(ecs)
+			, mainCounter(&taskScheduler)
 			, countersRunning
 			{ 
 				ftl::AtomicCounter(&taskScheduler),
@@ -30,7 +31,7 @@ namespace ecs
 		{
 			auto fn = [](ftl::TaskScheduler* taskScheduler, void* arg) -> void
 			{
-				auto tuple = reinterpret_cast<std::tuple<View<Ts...>*, int, Fn, int, const char*>*>(arg);
+				auto tuple = reinterpret_cast<std::tuple<View<Ts...>*, int, Fn*, int, const char*>*>(arg);
 				auto view = std::get<0>(*tuple);
 				auto iChunk = std::get<1>(*tuple);
 				auto job = std::get<2>(*tuple);
@@ -43,7 +44,7 @@ namespace ecs
 
 				for (auto it = view->beginForChunk(iChunk); it != view->endForChunk(); ++it)
 				{
-					job(it);
+					(*job)(it);
 				}
 
 				EASY_END_BLOCK;
@@ -53,13 +54,12 @@ namespace ecs
 		}
 
 		template<class TSystem>
-		void scheduleSystem(Ecs* ecs, int systemGroupIndex);
-		void runSystems();
+		int scheduleSystem(int systemGroupIndex = -1);
+		void runSystems(bool waitAll = true);
 
 		template <class Fn, class... Ts>
-		void addTask(int counterIndex, View<Ts...>* view, Fn&& job, const char* name)		// Called from a fiber
+		void addTask(int counterIndex, View<Ts...>* view, Fn* job, const char* name)		// Called from a fiber
 		{
-			taskScheduler.WaitForCounter(&countersRunning[counterIndex], 0, false);
 			view->initializeData();
 			int chunkCount = (int)view->queriedChunks_.size();
 			if (!chunkCount)
@@ -78,25 +78,37 @@ namespace ecs
 					tasks[i].ArgData = buffer;
 					tasks[i].Function = Scheduler::createTaskFunction<Fn, Ts...>();
 				}
+				printf("\t<%d\n", counterIndex);
 				taskScheduler.AddTasks(chunkCount, tasks.data(), &countersRunning[counterIndex]);
 			}
-			taskScheduler.WaitForCounter(&countersRunning[counterIndex], 0, false);
 		}
 
 		int createCounter()
 		{
 			int index = currentCounterIndex.fetch_add(1);
+			if (index >= countersRunning.size())
+			{
+				printf("Counter index too big: %d\n", index);
+			}
 			_ASSERT_EXPR(index < countersRunning.size(), L"Ran out of counters, most likely because c++ is too bad!");
 			return index;
 		}
 
-		void waitAll(Ecs* ecs)
+		void waitCounter(int counterIndex, bool fromMainThread = false)
+		{
+			if (countersRunning[counterIndex].Load())
+			{
+				taskScheduler.WaitForCounter(&countersRunning[counterIndex], 0, fromMainThread);
+				printf(">%d\n", counterIndex);
+			}
+		}
+
+		void waitAll()
 		{
 			int counterCount = currentCounterIndex;
-			taskScheduler.WaitForCounter(&mainCounter, 0, true);
 			for (int i = 0; i < counterCount; i++)
 			{
-				taskScheduler.WaitForCounter(&countersRunning[i], 0, true);
+				waitCounter(i, true);
 			}
 
 			currentCounterIndex = 0;
@@ -106,6 +118,7 @@ namespace ecs
 			ecs->executeCommmandBuffer();
 		}
 
+		Ecs* ecs;
 		ftl::TaskScheduler taskScheduler;
 
 		std::mutex argBufferMutex;
@@ -135,6 +148,7 @@ namespace ecs
 	};
 
 #define JOB_SET_FN(jobVariable) jobVariable.fn = [&](const decltype(jobVariable)::Arg& it)
+#define JOB_SCHEDULE(jobVariable) scheduleJob(jobVariable, #jobVariable)
 
 	struct System
 	{
@@ -143,7 +157,10 @@ namespace ecs
 		template<class... Ts>
 		void scheduleJob(Job<Ts...>& job, const char* name = "")
 		{
-			scheduler->addTask(systemIndex, &job.view, std::move(job.fn), name);
+			scheduler->waitCounter(systemIndex);
+			scheduler->addTask(systemIndex, &job.view, &job.fn, name);
+			if (scheduler->countersRunning[systemIndex].Load()) printf("\t");
+			scheduler->waitCounter(systemIndex);
 		}
 
 		Ecs* ecs;
@@ -153,19 +170,25 @@ namespace ecs
 	};
 
 	template<class TSystem>
-	void Scheduler::scheduleSystem(Ecs* ecs, int systemGroupIndex)
+	int Scheduler::scheduleSystem(int systemGroupIndex)
 	{
 		auto& systemPtr = systems.emplace_back(std::make_unique<TSystem>());
 		System* system = systemPtr.get();
+
+		if (systemGroupIndex < 0)
+			systemGroupIndex = createCounter();
 
 		system->ecs = ecs;
 		system->scheduler = this;
 		system->systemGroupIndex = systemGroupIndex;
 		system->systemIndex = createCounter();
+
+		return systemGroupIndex;
 	}
 
-	void Scheduler::runSystems()
+	void Scheduler::runSystems(bool wait)
 	{
+		printf("RUN\n");
 		auto fnWrapperTask = [](ftl::TaskScheduler* taskScheduler, void* args)
 		{
 			auto& [scheduler, systemGroupIndex] = *reinterpret_cast<std::tuple<Scheduler*, int>*>(args);
@@ -174,7 +197,7 @@ namespace ecs
 				if (system->systemGroupIndex == systemGroupIndex)
 				{
 					system->scheduleJobs();
-					taskScheduler->WaitForCounter(&scheduler->countersRunning[system->systemIndex], 0, false);
+					scheduler->waitCounter(system->systemIndex);
 				}
 			}
 		};
@@ -197,7 +220,13 @@ namespace ecs
 			ftl::Task task;
 			task.ArgData = buffer;
 			task.Function = fnWrapperTask;
+			printf("<%d\n", groupIndex);
 			taskScheduler.AddTasks(1, &task, &countersRunning[groupIndex]);
+		}
+
+		if (wait)
+		{
+			waitAll();
 		}
 	}
 }
