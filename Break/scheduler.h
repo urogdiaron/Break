@@ -72,13 +72,17 @@ namespace ecs
 				{
 					auto argTuple = std::make_tuple(view, i, job, counterIndex, name);
 					int bufferIndex = currentBufferIndex.fetch_add(sizeof(argTuple));
+					if (bufferIndex == 0)
+					{
+						printf("Buffer index for jobs is 0.");
+					}
 					uint8_t* buffer = &argBuffer[bufferIndex];
 					memcpy(buffer, &argTuple, sizeof(argTuple));
 
 					tasks[i].ArgData = buffer;
 					tasks[i].Function = Scheduler::createTaskFunction<Fn, Ts...>();
 				}
-				printf("\t<%d\n", counterIndex);
+				//printf("\t<%d\n", counterIndex);
 				taskScheduler.AddTasks(chunkCount, tasks.data(), &countersRunning[counterIndex]);
 			}
 		}
@@ -98,17 +102,42 @@ namespace ecs
 		{
 			if (countersRunning[counterIndex].Load())
 			{
+				//printf(">%d\n", counterIndex);
 				taskScheduler.WaitForCounter(&countersRunning[counterIndex], 0, fromMainThread);
-				printf(">%d\n", counterIndex);
+				if (countersRunning[counterIndex].Load() > 0)
+				{
+					if (counterIndex == 0)
+					{
+						printf("This is impossible %d, MainThread: %d", counterIndex, (int)fromMainThread);
+						taskScheduler.WaitForCounter(&countersRunning[counterIndex], 0, fromMainThread);
+					}
+					else
+					{
+						printf("Hey %d, MainThread: %d", counterIndex, (int)fromMainThread);
+					}
+				}
 			}
+			//else if (fromMainThread)
+			//{
+			//	printf("Can't wait for counter index %d", counterIndex);
+			//}
 		}
 
 		void waitAll()
 		{
 			int counterCount = currentCounterIndex;
+			if (counterCount <= 0)
+			{
+				printf("No counter to wait for!");
+			}
 			for (int i = 0; i < counterCount; i++)
 			{
 				waitCounter(i, true);
+			}
+
+			if (countersRunning[0].Load() > 0)
+			{
+				printf("WTF man?");
 			}
 
 			currentCounterIndex = 0;
@@ -133,6 +162,9 @@ namespace ecs
 		bool singleThreadedMode = false;
 	};
 
+	enum class JobState { None, Running, Done };
+
+
 	template<class... Ts>
 	struct Job
 	{
@@ -143,8 +175,17 @@ namespace ecs
 		{
 		}
 
+		/*~Job()
+		{
+			if (state != JobState::Done)
+			{
+				printf("Job destructor before finishing!");
+			}
+		}*/
+
 		std::function<void(const Arg&)> fn;
 		View<Ts...> view;
+		//JobState state = JobState::None;
 	};
 
 #define JOB_SET_FN(jobVariable) jobVariable.fn = [&](const decltype(jobVariable)::Arg& it)
@@ -158,9 +199,11 @@ namespace ecs
 		void scheduleJob(Job<Ts...>& job, const char* name = "")
 		{
 			scheduler->waitCounter(systemIndex);
+			//job.state = JobState::Running;
 			scheduler->addTask(systemIndex, &job.view, &job.fn, name);
-			if (scheduler->countersRunning[systemIndex].Load()) printf("\t");
+			//if (scheduler->countersRunning[systemIndex].Load()) printf("\t");
 			scheduler->waitCounter(systemIndex);
+			//job.state = JobState::Done;
 		}
 
 		Ecs* ecs;
@@ -186,9 +229,10 @@ namespace ecs
 		return systemGroupIndex;
 	}
 
+#pragma optimize("", off)
 	void Scheduler::runSystems(bool wait)
 	{
-		printf("RUN\n");
+		//printf("RUN\n");
 		auto fnWrapperTask = [](ftl::TaskScheduler* taskScheduler, void* args)
 		{
 			auto& [scheduler, systemGroupIndex] = *reinterpret_cast<std::tuple<Scheduler*, int>*>(args);
@@ -220,7 +264,7 @@ namespace ecs
 			ftl::Task task;
 			task.ArgData = buffer;
 			task.Function = fnWrapperTask;
-			printf("<%d\n", groupIndex);
+			//printf("<%d\n", groupIndex);
 			taskScheduler.AddTasks(1, &task, &countersRunning[groupIndex]);
 		}
 
@@ -229,4 +273,6 @@ namespace ecs
 			waitAll();
 		}
 	}
+#pragma optimize("", on)
+
 }

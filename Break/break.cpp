@@ -556,42 +556,45 @@ struct UpdateBallCollisionsTiled : public ecs::System
     }
 };
 
-void resolve_ball_collisions()
+struct ResolveBallCollisions : public ecs::System
 {
-    EASY_FUNCTION();
-    auto& ecs = getEcs();
-    for (auto& ballCollision : g_Globals.ballCollisions)
+    void scheduleJobs() override
     {
-        auto [vel] = ecs.getComponents<Velocity>(ballCollision.ballId);
-        // this assumes the bricks are not moving!
-        // so that their relative velocities are the same as the ball's velocity
-        if (vec_dot(*vel, ballCollision.overlap.normal) > 0)
-            continue;
-
-        (vec&)*vel = vec_reflect(*vel, ballCollision.overlap.normal);
-        int a = 56;
-        a = 235;
-        //(vec&)*pos += ballCollision.overlap.normal * ballCollision.overlap.penetration;
-    }
-}
-
-void handle_brick_collisions()
-{
-    EASY_FUNCTION();
-    auto& ecs = getEcs();
-    auto brickView = ecs::View<Position, Size, TileReference, Brick>(ecs);
-    for (auto& [brickId, pos, size, tileRef, brick] : brickView.with<CollidedWithBall>())
-    {
-        if (brick.type == Brick::Type::Ballspawner)
+        for (auto& ballCollision : g_Globals.ballCollisions)
         {
-            vec ballPosition = pos - vec(0, size.y + Globals::ballRadius);
-            vec ballVelocity = vec(0, -Globals::ballStartingSpeed);
-            auto newBallId = brickView.createEntity(g_Globals.prefabs.spawnedBall, Position{ ballPosition }, Velocity{ ballVelocity });
+            auto [vel] = ecs->getComponents<Velocity>(ballCollision.ballId);
+            // this assumes the bricks are not moving!
+            // so that their relative velocities are the same as the ball's velocity
+            if (vec_dot(*vel, ballCollision.overlap.normal) > 0)
+                continue;
+
+            (vec&)*vel = vec_reflect(*vel, ballCollision.overlap.normal);
+            int a = 56;
+            a = 235;
+            //(vec&)*pos += ballCollision.overlap.normal * ballCollision.overlap.penetration;
         }
-        brickView.deleteEntity(brickId);
     }
-    getEcs().executeCommmandBuffer();
-}
+};
+
+struct HandleBrickCollisions : public ecs::System
+{
+    void scheduleJobs() override
+    {
+        auto brickCollisions = ecs::Job(ecs->view<Position, Size, TileReference, Brick>().with<CollidedWithBall>());
+        JOB_SET_FN(brickCollisions)
+        {
+            auto& [brickId, pos, size, tileRef, brick] = *it;
+            if (brick.type == Brick::Type::Ballspawner)
+            {
+                vec ballPosition = pos - vec(0, size.y + Globals::ballRadius);
+                vec ballVelocity = vec(0, -Globals::ballStartingSpeed);
+                auto newBallId = it.getView()->createEntity(g_Globals.prefabs.spawnedBall, Position{ ballPosition }, Velocity{ ballVelocity });
+            }
+            it.getView()->deleteEntity(brickId);
+        };
+        JOB_SCHEDULE(brickCollisions);
+    }
+};
 
 bool has_balls_in_play()
 {
@@ -599,41 +602,47 @@ bool has_balls_in_play()
     return balls.getCount() > 0;
 }
 
-void update_visibility()
+struct UpdateVisibility : public ecs::System
 {
-    EASY_FUNCTION();
-    auto [cameraPos, cameraSize] = getEcs().getComponents<Position, Size>(g_Globals.camera);
-    vec cameraMin = *cameraPos - *cameraSize * 0.5f;
-    vec cameraMax = *cameraPos + *cameraSize * 0.5f;
-
-    auto fnIsVisible = [cameraMin, cameraMax](const vec& pos, const vec& size) -> bool
+    void scheduleJobs() override
     {
-        vec objectMin = pos - size * 0.5f;
-        vec objectMax = pos + size * 0.5f;
+        auto [cameraPos, cameraSize] = ecs->getComponents<Position, Size>(g_Globals.camera);
+        vec cameraMin = *cameraPos - *cameraSize * 0.5f;
+        vec cameraMax = *cameraPos + *cameraSize * 0.5f;
 
-        bool outside = 
-            objectMin.x > cameraMax.x ||
-            objectMin.y > cameraMax.y ||
-            objectMax.x < cameraMin.x ||
-            objectMax.y < cameraMin.y;
+        auto fnIsVisible = [cameraMin, cameraMax](const vec& pos, const vec& size) -> bool
+        {
+            vec objectMin = pos - size * 0.5f;
+            vec objectMax = pos + size * 0.5f;
 
-        return !outside;
-    };
+            bool outside =
+                objectMin.x > cameraMax.x ||
+                objectMin.y > cameraMax.y ||
+                objectMax.x < cameraMin.x ||
+                objectMax.y < cameraMin.y;
 
-    auto v1 = ecs::View<const Position, const Size>(getEcs()).with<Visible>();
-    for (auto& [id, pos, size] : v1)
-    {
-        if (!fnIsVisible(pos, size))
-            v1.deleteComponents<Visible>(id);
+            return !outside;
+        };
+
+        auto hide = ecs::Job(ecs->view<const Position, const Size>().with<Visible>());
+        JOB_SET_FN(hide)
+        {
+            auto& [id, pos, size] = *it;
+            if (!fnIsVisible(pos, size))
+                it.getView()->deleteComponents<Visible>(id);
+        };
+        JOB_SCHEDULE(hide);
+
+        auto show = ecs::Job(ecs->view<const Position, const Size>().exclude<Visible>());
+        JOB_SET_FN(show)
+        {
+            auto& [id, pos, size] = *it;
+            if (fnIsVisible(pos, size))
+                it.getView()->addComponent<Visible>(id);
+        };
+        JOB_SCHEDULE(show);
     }
-
-    auto v2 = ecs::View<const Position, const Size>(getEcs()).exclude<Visible>();
-    for (auto& [id, pos, size] : v2)
-    {
-        if (fnIsVisible(pos, size))
-            v2.addComponent<Visible>(id);
-    }
-}
+};
 
 void render_sprites()
 {
@@ -641,7 +650,7 @@ void render_sprites()
     Sprite usedSpriteDesc;
     vec sizeCorrection = { 1.0f, 1.0f };
 
-    auto view = ecs::View<Position, Size>(getEcs()).with<Visible, Sprite>();
+    auto view = getEcs().view<Position, Size>().with<Visible, Sprite>();
     for (auto it = view.begin(); it != view.end(); ++it)
     {
         auto& [id, pos, size] = *it;
@@ -839,8 +848,9 @@ void update()
     scheduler.scheduleSystem<UpdateBallTrailParticles>(systemGroupMovement);
     scheduler.runSystems();
 
-    resolve_ball_collisions();
-    handle_brick_collisions();
+    scheduler.scheduleSystem<ResolveBallCollisions>();
+    scheduler.scheduleSystem<HandleBrickCollisions>();
+    scheduler.runSystems();
 
     update_ball_respawns();
     update_camera_move();
@@ -890,7 +900,10 @@ void render()
 {
     EASY_FUNCTION();
     setViewFromCamera();
-    update_visibility();
+
+    getScheduler().scheduleSystem<UpdateVisibility>();
+    getScheduler().runSystems();
+
     render_sprites();
     //render_tile_debug();
     render_stats();
