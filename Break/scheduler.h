@@ -10,18 +10,6 @@ namespace ecs
 	{
 		Scheduler(Ecs* ecs)
 			: ecs(ecs)
-			, mainCounter(&taskScheduler)
-			, countersRunning
-			{ 
-				ftl::AtomicCounter(&taskScheduler),
-				ftl::AtomicCounter(&taskScheduler),
-				ftl::AtomicCounter(&taskScheduler),
-				ftl::AtomicCounter(&taskScheduler),
-				ftl::AtomicCounter(&taskScheduler),
-				ftl::AtomicCounter(&taskScheduler),
-				ftl::AtomicCounter(&taskScheduler),
-				ftl::AtomicCounter(&taskScheduler),
-			}
 		{
 			taskScheduler.Init({ 400, 0, ftl::EmptyQueueBehavior::Sleep });
 		}
@@ -31,15 +19,14 @@ namespace ecs
 		{
 			auto fn = [](ftl::TaskScheduler* taskScheduler, void* arg) -> void
 			{
-				auto tuple = reinterpret_cast<std::tuple<View<Ts...>*, int, Fn*, int, const char*>*>(arg);
+				auto tuple = reinterpret_cast<std::tuple<View<Ts...>*, int, Fn*, const char*>*>(arg);
 				auto view = std::get<0>(*tuple);
 				auto iChunk = std::get<1>(*tuple);
 				auto job = std::get<2>(*tuple);
-				auto counterIndex = std::get<3>(*tuple);
-				auto name = std::get<4>(*tuple);
+				auto name = std::get<3>(*tuple);
 
 				char blockName[64];
-				sprintf_s(blockName, "Task MT %s (%d)", name, counterIndex);
+				sprintf_s(blockName, "Task MT %s", name);
 				EASY_NONSCOPED_BLOCK(blockName);
 
 				for (auto it = view->beginForChunk(iChunk); it != view->endForChunk(); ++it)
@@ -58,7 +45,7 @@ namespace ecs
 		void runSystems(bool waitAll = true);
 
 		template <class Fn, class... Ts>
-		void addTask(int counterIndex, View<Ts...>* view, Fn* job, const char* name)		// Called from a fiber
+		void addTask(ftl::AtomicCounter* counter, View<Ts...>* view, Fn* job, const char* name)		// Called from a fiber
 		{
 			view->initializeData();
 			int chunkCount = (int)view->queriedChunks_.size();
@@ -70,7 +57,7 @@ namespace ecs
 				std::vector<ftl::Task> tasks(chunkCount);
 				for (int i = 0; i < chunkCount; i++)
 				{
-					auto argTuple = std::make_tuple(view, i, job, counterIndex, name);
+					auto argTuple = std::make_tuple(view, i, job, name);
 					int bufferIndex = currentBufferIndex.fetch_add(sizeof(argTuple));
 					if (bufferIndex == 0)
 					{
@@ -83,68 +70,21 @@ namespace ecs
 					tasks[i].Function = Scheduler::createTaskFunction<Fn, Ts...>();
 				}
 				//printf("\t<%d\n", counterIndex);
-				taskScheduler.AddTasks(chunkCount, tasks.data(), &countersRunning[counterIndex]);
+				taskScheduler.AddTasks(chunkCount, tasks.data(), counter);
 			}
 		}
 
-		int createCounter()
+		void waitCounter(ftl::AtomicCounter* counter, bool fromMainThread = false)
 		{
-			int index = currentCounterIndex.fetch_add(1);
-			if (index >= countersRunning.size())
-			{
-				printf("Counter index too big: %d\n", index);
-			}
-			_ASSERT_EXPR(index < countersRunning.size(), L"Ran out of counters, most likely because c++ is too bad!");
-			return index;
-		}
-
-		void waitCounter(int counterIndex, bool fromMainThread = false)
-		{
-			if (countersRunning[counterIndex].Load())
+			if (counter->Load())
 			{
 				//printf(">%d\n", counterIndex);
-				taskScheduler.WaitForCounter(&countersRunning[counterIndex], 0, fromMainThread);
-				if (countersRunning[counterIndex].Load() > 0)
+				taskScheduler.WaitForCounter(counter, 0, fromMainThread);
+				if (counter->Load() > 0)
 				{
-					if (counterIndex == 0)
-					{
-						printf("This is impossible %d, MainThread: %d", counterIndex, (int)fromMainThread);
-						taskScheduler.WaitForCounter(&countersRunning[counterIndex], 0, fromMainThread);
-					}
-					else
-					{
-						printf("Hey %d, MainThread: %d", counterIndex, (int)fromMainThread);
-					}
+					printf("This is impossible, MainThread: %d", (int)fromMainThread);
 				}
 			}
-			//else if (fromMainThread)
-			//{
-			//	printf("Can't wait for counter index %d", counterIndex);
-			//}
-		}
-
-		void waitAll()
-		{
-			int counterCount = currentCounterIndex;
-			if (counterCount <= 0)
-			{
-				printf("No counter to wait for!");
-			}
-			for (int i = 0; i < counterCount; i++)
-			{
-				waitCounter(i, true);
-			}
-
-			if (countersRunning[0].Load() > 0)
-			{
-				printf("WTF man?");
-			}
-
-			currentCounterIndex = 0;
-			currentBufferIndex = 0;
-
-			systems.clear();
-			ecs->executeCommmandBuffer();
 		}
 
 		Ecs* ecs;
@@ -153,10 +93,7 @@ namespace ecs
 		std::mutex argBufferMutex;
 		std::array<uint8_t, (1 << 20)> argBuffer; // 1 MB
 		std::atomic<int> currentBufferIndex = 0;
-
-		ftl::AtomicCounter mainCounter;
-		std::array<ftl::AtomicCounter, 8> countersRunning;
-		std::atomic<int> currentCounterIndex = 0;
+		int currentSystemGroupIndex = 0;
 
 		std::vector<std::unique_ptr<struct System>> systems;
 		bool singleThreadedMode = false;
@@ -198,18 +135,14 @@ namespace ecs
 		template<class... Ts>
 		void scheduleJob(Job<Ts...>& job, const char* name = "")
 		{
-			scheduler->waitCounter(systemIndex);
-			//job.state = JobState::Running;
-			scheduler->addTask(systemIndex, &job.view, &job.fn, name);
-			//if (scheduler->countersRunning[systemIndex].Load()) printf("\t");
-			scheduler->waitCounter(systemIndex);
-			//job.state = JobState::Done;
+			ftl::AtomicCounter counter(&scheduler->taskScheduler);
+			scheduler->addTask(&counter, &job.view, &job.fn, name);
+			scheduler->waitCounter(&counter);
 		}
 
 		Ecs* ecs;
 		Scheduler* scheduler;
 		int systemGroupIndex;
-		int systemIndex;
 	};
 
 	template<class TSystem>
@@ -219,12 +152,11 @@ namespace ecs
 		System* system = systemPtr.get();
 
 		if (systemGroupIndex < 0)
-			systemGroupIndex = createCounter();
+			systemGroupIndex = currentSystemGroupIndex++;
 
 		system->ecs = ecs;
 		system->scheduler = this;
 		system->systemGroupIndex = systemGroupIndex;
-		system->systemIndex = createCounter();
 
 		return systemGroupIndex;
 	}
@@ -241,19 +173,26 @@ namespace ecs
 				if (system->systemGroupIndex == systemGroupIndex)
 				{
 					system->scheduleJobs();
-					scheduler->waitCounter(system->systemIndex);
 				}
 			}
 		};
 
 		std::vector<int> uniqueGroupIndices;
+		ftl::AtomicCounter groupCounters[] = {
+			ftl::AtomicCounter(&taskScheduler), ftl::AtomicCounter(&taskScheduler),
+			ftl::AtomicCounter(&taskScheduler), ftl::AtomicCounter(&taskScheduler)
+		};
+
 		for (auto& system : systems)
 		{
 			auto it = std::find(uniqueGroupIndices.begin(), uniqueGroupIndices.end(), system->systemGroupIndex);
 			if (it == uniqueGroupIndices.end())
+			{
 				uniqueGroupIndices.push_back(system->systemGroupIndex);
+			}
 		}
 
+		int iGroup = 0;
 		for (int groupIndex : uniqueGroupIndices)
 		{
 			auto argTuple = std::make_tuple(this, groupIndex);
@@ -265,13 +204,20 @@ namespace ecs
 			task.ArgData = buffer;
 			task.Function = fnWrapperTask;
 			//printf("<%d\n", groupIndex);
-			taskScheduler.AddTasks(1, &task, &countersRunning[groupIndex]);
+			taskScheduler.AddTasks(1, &task, &groupCounters[iGroup]);
+			iGroup++;
 		}
 
-		if (wait)
+		for (auto& groupCounter : groupCounters)
 		{
-			waitAll();
+			waitCounter(&groupCounter, true);
 		}
+
+		currentSystemGroupIndex = 0;
+		currentBufferIndex = 0;
+
+		systems.clear();
+		ecs->executeCommmandBuffer();
 	}
 #pragma optimize("", on)
 
