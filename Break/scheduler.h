@@ -112,17 +112,17 @@ namespace ecs
 		{
 		}
 
-		/*~Job()
+		~Job()
 		{
 			if (state != JobState::Done)
 			{
 				printf("Job destructor before finishing!");
 			}
-		}*/
+		}
 
 		std::function<void(const Arg&)> fn;
 		View<Ts...> view;
-		//JobState state = JobState::None;
+		JobState state = JobState::None;
 	};
 
 #define JOB_SET_FN(jobVariable) jobVariable.fn = [&](const decltype(jobVariable)::Arg& it)
@@ -135,9 +135,11 @@ namespace ecs
 		template<class... Ts>
 		void scheduleJob(Job<Ts...>& job, const char* name = "")
 		{
+			job.state = JobState::Running;
 			ftl::AtomicCounter counter(&scheduler->taskScheduler);
 			scheduler->addTask(&counter, &job.view, &job.fn, name);
 			scheduler->waitCounter(&counter);
+			job.state = JobState::Done;
 		}
 
 		Ecs* ecs;

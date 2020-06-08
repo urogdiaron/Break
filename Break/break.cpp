@@ -303,13 +303,13 @@ void clear_tile_references_for_deleted_entities()
 {
     EASY_FUNCTION();
     auto& ecs = getEcs();
-    auto v = ecs::View<TileReference>(ecs).exclude<TileReferenceCreator>();
+    auto v = ecs.view<TileReference>().exclude<TileReferenceCreator>();
     for (auto& [id, tileReference] : v)
     {
         update_tiles_for_deletion(id, tileReference);
         v.deleteComponents<TileReference>(id);
     }
-    getEcs().executeCommmandBuffer();
+    ecs.executeCommmandBuffer();
 }
 
 void setup_level(GameState& gamestate)
@@ -364,7 +364,7 @@ void setup_level(GameState& gamestate)
 void spawn_ball_on_paddle()
 {
     auto& ecs = getEcs();
-    auto paddleView = ecs::View<Position, Size>(ecs).with<Paddle>();
+    auto paddleView = ecs.view<Position, Size>().with<Paddle>();
     auto itPaddle = paddleView.begin();
     if (itPaddle == paddleView.end())
         return;
@@ -381,7 +381,7 @@ void spawn_ball_on_paddle()
 
 void fire_ball()
 {
-    auto view = ecs::View<Velocity>(getEcs()).with<Ball, AttachedToPaddle>();
+    auto view = getEcs().view<Velocity>().with<Ball, AttachedToPaddle>();
     for (auto& [id, vel] : view)
     {
         (vec&)vel = vec_normalize(vec{ 1,1 }) * Globals::ballStartingSpeed;
@@ -394,7 +394,7 @@ void update_paddle_by_mouse()
     EASY_FUNCTION();
     vec mousePosition{ sf::Mouse::getPosition(g_Globals.window) };
     float screenSizeX = g_Globals.screenSize.x;
-    for (auto& [id, pos, size, tileRef] : ecs::View<Position, Size, TileReference>(getEcs()).with<Paddle>())
+    for (auto& [id, pos, size, tileRef] : getEcs().view<Position, Size, TileReference>().with<Paddle>())
     {
         auto oldPos = pos;
         pos.x = mousePosition.x;
@@ -408,7 +408,7 @@ void update_balls_attached_to_paddle()
 {
     EASY_FUNCTION();
     auto& ecs = getEcs();
-    for (auto& [id, pos, tileRef, attach] : ecs::View<Position, TileReference, const AttachedToPaddle>(ecs))
+    for (auto& [id, pos, tileRef, attach] : ecs.view<Position, TileReference, const AttachedToPaddle>())
     {
         auto paddlePos = ecs.getComponent<Position>(attach.paddleId);
         if (!paddlePos)
@@ -419,7 +419,7 @@ void update_balls_attached_to_paddle()
     }
 }
 
-struct PositionByVelocitySystem : public ecs::System
+struct TiledPositionByVelocitySystem : public ecs::System
 {
     void scheduleJobs() override
     {
@@ -437,9 +437,15 @@ struct PositionByVelocitySystem : public ecs::System
             update_tiles_after_move(id, oldPos, pos, Size(Globals::ballRadius, Globals::ballRadius), tileRef);
         };
         JOB_SCHEDULE(updateTiledPositions);
+    }
+};
 
-
-        auto updateSimple = ecs::Job(ecs::View<Position, const Velocity>(*ecs).exclude<AttachedToPaddle, TileReference>());
+struct SimplePositionByVelocitySystem : public ecs::System
+{
+    void scheduleJobs() override
+    {
+        float dt = g_Globals.elapsedTime;
+        auto updateSimple = ecs::Job(ecs->view<Position, const Velocity>().exclude<AttachedToPaddle, TileReference>());
         JOB_SET_FN(updateSimple)
         {
             auto& [id, pos, vel] = *it;
@@ -598,7 +604,7 @@ struct HandleBrickCollisions : public ecs::System
 
 bool has_balls_in_play()
 {
-    auto balls = ecs::View<>(getEcs()).with<Ball>();
+    auto balls = getEcs().view<>().with<Ball>();
     return balls.getCount() > 0;
 }
 
@@ -679,7 +685,7 @@ void render_tile_debug()
 {
     ecs::entityId ballId = 0;
     auto& ecs = getEcs();
-    for (auto& [id, ball] : ecs::View<Ball>(ecs))
+    for (auto& [id, ball] : getEcs().view<Ball>())
     {
         ballId = id;
         break;
@@ -743,7 +749,7 @@ struct UpdateBallMagnet : public ecs::System
 void fix_up_horizontal_ball_velocities()
 {
     EASY_FUNCTION();
-    for (auto& [ballId, ballVelocity] : ecs::View<Velocity>(getEcs()).with<Ball>())
+    for (auto& [ballId, ballVelocity] : getEcs().view<Velocity>().with<Ball>())
     {
         if (fabsf(ballVelocity.y) < 15)
         {
@@ -780,10 +786,10 @@ void update_camera_move()
 {
     EASY_FUNCTION();
     vec cameraMove;
-    if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::W)) cameraMove.y -= 1.0f;
-    if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::S)) cameraMove.y += 1.0f;
-    if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::D)) cameraMove.x += 1.0f;
     if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::A)) cameraMove.x -= 1.0f;
+    if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::D)) cameraMove.x += 1.0f;
+    if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::W)) cameraMove.y += 1.0f;
+    if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::S)) cameraMove.y -= 1.0f;
 
     if (!vec_is_zero(cameraMove))
     {
@@ -843,9 +849,12 @@ void update()
 
     fix_up_horizontal_ball_velocities();
 
-    int systemGroupMovement = scheduler.scheduleSystem<PositionByVelocitySystem>();
-    scheduler.scheduleSystem<UpdateBallCollisionsTiled>(systemGroupMovement);
-    scheduler.scheduleSystem<UpdateBallTrailParticles>(systemGroupMovement);
+    scheduler.scheduleSystem<TiledPositionByVelocitySystem>();
+    scheduler.scheduleSystem<SimplePositionByVelocitySystem>();
+    scheduler.runSystems();
+
+    scheduler.scheduleSystem<UpdateBallCollisionsTiled>();
+    scheduler.scheduleSystem<UpdateBallTrailParticles>();
     scheduler.runSystems();
 
     scheduler.scheduleSystem<ResolveBallCollisions>();
@@ -857,8 +866,7 @@ void update()
 
     clear_tile_references_for_deleted_entities();
 
-    ecs::View<> deletedEntites(getEcs());
-    if (deletedEntites.with<ecs::DeletedEntity>().getCount())
+    if (getEcs().view<>().with<ecs::DeletedEntity>().getCount())
     {
         printf("Deleted entites are still in this fucking game!");
     }
@@ -870,8 +878,11 @@ void update()
 void setViewFromCamera()
 {
     auto& ecs = getEcs();
-    auto [cameraPos, cameraSize] = ecs.getComponents<Position, Size>(g_Globals.camera);
-    g_Globals.window.setView(sf::View(sf::FloatRect(*cameraPos - (*cameraSize) * 0.5f, *cameraSize)));
+    auto [cameraPos, cameraSize] = ecs.getComponents<const Position, const Size>(g_Globals.camera);
+    vec pos = *cameraPos;
+    vec size = *cameraSize;
+    pos.y = g_Globals.screenSize.y - pos.y;
+    g_Globals.window.setView(sf::View(sf::FloatRect(pos - size * 0.5f, size)));
 }
 
 sf::Text text;
