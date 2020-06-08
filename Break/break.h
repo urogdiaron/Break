@@ -86,8 +86,9 @@ struct TileReference
     bool isBall = false;
 };
 
-struct Visible
+struct Visibility
 {
+    bool visible = false;
 };
 
 struct GameState
@@ -143,12 +144,12 @@ struct Globals
 
     struct Prefabs
     {
-        ecs::Prefab<Size, Position, Velocity, TileReferenceCreator, AttachedToPaddle, Ball, ParticleEmitter, Sprite> attachedBall = { Size{ ballRadius * 2, ballRadius * 2 }, TileReferenceCreator{true}, Sprite{3} };
-        ecs::Prefab<Size, Position, Velocity, TileReferenceCreator, Ball, ParticleEmitter, Sprite> spawnedBall = { Size{ ballRadius * 2, ballRadius * 2 }, TileReferenceCreator{true}, Sprite{3} };
-        ecs::Prefab<Position, Size, TileReferenceCreator, Paddle, Sprite> paddle = { Sprite{2} };
-        ecs::Prefab<Position, Size, TileReferenceCreator, Brick, Sprite> brick = { Sprite{1} };
+        ecs::Prefab<Size, Position, Velocity, TileReferenceCreator, AttachedToPaddle, Ball, ParticleEmitter, Sprite, Visibility> attachedBall = { Size{ ballRadius * 2, ballRadius * 2 }, TileReferenceCreator{true}, Sprite{3} };
+        ecs::Prefab<Size, Position, Velocity, TileReferenceCreator, Ball, ParticleEmitter, Sprite, Visibility> spawnedBall = { Size{ ballRadius * 2, ballRadius * 2 }, TileReferenceCreator{true}, Sprite{3} };
+        ecs::Prefab<Position, Size, TileReferenceCreator, Paddle, Sprite, Visibility> paddle = { Sprite{2} };
+        ecs::Prefab<Position, Size, TileReferenceCreator, Brick, Sprite, Visibility> brick = { Sprite{1} };
         ecs::Prefab<Position, Size, Camera> camera;
-        ecs::Prefab<Position, Size, Velocity, Particle, Sprite, ecs::DontSaveEntity> particle = { Size{ 5.0f, 5.0f },  Sprite{3}, Velocity{ 20, -20 } };
+        ecs::Prefab<Position, Size, Velocity, Particle, Sprite, Visibility, ecs::DontSaveEntity> particle = { Size{ 5.0f, 5.0f },  Sprite{3}, Velocity{ 20, -20 } };
     };
 
     ecs::Ecs ecs;

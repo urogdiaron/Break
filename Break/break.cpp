@@ -81,7 +81,7 @@ void register_types(){
     ecs.registerType<Brick>("Brick");
     ecs.registerType<CollidedWithBall>("CollidedWithBall");
     ecs.registerType<Camera>("Camera");
-    ecs.registerType<Visible>("Visible", ecs::ComponentType::DontSave);
+    ecs.registerType<Visibility>("Visibility", ecs::ComponentType::Shared);     // the exact value doesnt need to be saved but the existence of this should be
     ecs.registerType<Particle>("Particle");
     ecs.registerType<ParticleEmitter>("ParticleEmitter");
     ecs.registerType<TransformOrder>("TransformOrder", ecs::ComponentType::Shared);
@@ -630,21 +630,21 @@ struct UpdateVisibility : public ecs::System
             return !outside;
         };
 
-        auto hide = ecs::Job(ecs->view<const Position, const Size>().with<Visible>());
+        auto hide = ecs::Job(ecs->view<const Position, const Size>().filterShared(Visibility{ true }));
         JOB_SET_FN(hide)
         {
             auto& [id, pos, size] = *it;
             if (!fnIsVisible(pos, size))
-                it.getView()->deleteComponents<Visible>(id);
+                it.getView()->setSharedComponentData(id, Visibility{ false });
         };
         JOB_SCHEDULE(hide);
 
-        auto show = ecs::Job(ecs->view<const Position, const Size>().exclude<Visible>());
+        auto show = ecs::Job(ecs->view<const Position, const Size>().filterShared(Visibility{ false }));
         JOB_SET_FN(show)
         {
             auto& [id, pos, size] = *it;
             if (fnIsVisible(pos, size))
-                it.getView()->addComponent<Visible>(id);
+                it.getView()->setSharedComponentData(id, Visibility{ true });
         };
         JOB_SCHEDULE(show);
     }
@@ -656,7 +656,7 @@ void render_sprites()
     Sprite usedSpriteDesc;
     vec sizeCorrection = { 1.0f, 1.0f };
 
-    auto view = getEcs().view<Position, Size>().with<Visible, Sprite>();
+    auto view = getEcs().view<Position, Size>().with<Sprite>().filterShared(Visibility{ true });
     for (auto it = view.begin(); it != view.end(); ++it)
     {
         auto& [id, pos, size] = *it;
