@@ -85,7 +85,8 @@ void register_types(){
     ecs.registerType<Particle>("Particle");
     ecs.registerType<ParticleEmitter>("ParticleEmitter");
     ecs.registerType<TransformOrder>("TransformOrder", ecs::ComponentType::Shared);
-    ecs.registerType<Sprite>("SpriteIndex", ecs::ComponentType::Shared);
+    ecs.registerType<Sprite>("Sprite", ecs::ComponentType::Shared);
+    ecs.registerType<TintColor>("TintColor");
 }
 
 int loadTexture(const char* fileName)
@@ -312,6 +313,19 @@ void clear_tile_references_for_deleted_entities()
     ecs.executeCommmandBuffer();
 }
 
+sf::Color getColorForBrick(const Brick::Type& type)
+{
+    switch (type)
+    {
+    case Brick::Type::Ballspawner:
+        return sf::Color(255, 255, 0, 255);
+    case Brick::Type::BallModifier:
+        return sf::Color(10, 255, 24, 255);
+    default:
+        return sf::Color(255, 50, 10, 255);
+    }
+}
+
 void setup_level(GameState& gamestate)
 {
     auto& ecs = getEcs();
@@ -341,16 +355,20 @@ void setup_level(GameState& gamestate)
     {
 		for (int i = 0; i < columns; i++)
 		{
-            Brick::Type brickType = Brick::Type::Simple;
-            int random = rand() % 1;
+            Brick brick;
+            int random = rand() % 10;
             if (random == 0)
+                brick.type = Brick::Type::Ballspawner;
+            else if (random == 1)
             {
-                brickType = Brick::Type::Ballspawner;
+                brick.type = Brick::Type::BallModifier;
+                brick.ballModifier = Ball::Modifier::Unstoppable;
             }
 
             ecs::entityId id = ecs.createEntity(g_Globals.prefabs.brick,
-                Position{ currentBrickPos }, Size{ brickSize }, Brick{ brickType },
-                Sprite{ 1, brickType == Brick::Type::Ballspawner ? sf::Color(255, 255, 0, 255) : sf::Color(255, 50, 10, 255) }
+                Position{ currentBrickPos }, Size{ brickSize }, brick,
+                Sprite{ 1 }, 
+                TintColor{ getColorForBrick(brick.type).toInteger() }
             );
             currentBrickPos.x += brickSize.x + brickSpacing;
         }
@@ -568,7 +586,21 @@ struct ResolveBallCollisions : public ecs::System
     {
         for (auto& ballCollision : g_Globals.ballCollisions)
         {
-            auto [vel] = ecs->getComponents<Velocity>(ballCollision.ballId);
+            auto [vel, ball, tintColor] = ecs->getComponents<Velocity, Ball, TintColor>(ballCollision.ballId);
+            auto brick = ecs->getComponent<Brick>(ballCollision.otherObjectId);
+
+            if (brick && brick->type == Brick::Type::BallModifier)
+            {
+                ball->modifier = brick->ballModifier;
+                tintColor->color = getColorForBrick(Brick::Type::BallModifier).toInteger();
+            }
+
+            if (ball->modifier == Ball::Modifier::Unstoppable)
+            {
+                if(brick)
+                    continue;
+            }
+
             // this assumes the bricks are not moving!
             // so that their relative velocities are the same as the ball's velocity
             if (vec_dot(*vel, ballCollision.overlap.normal) > 0)
@@ -656,10 +688,10 @@ void render_sprites()
     Sprite usedSpriteDesc;
     vec sizeCorrection = { 1.0f, 1.0f };
 
-    auto view = getEcs().view<Position, Size>().with<Sprite>().filterShared(Visibility{ true });
+    auto view = getEcs().view<Position, Size, TintColor>().with<Sprite>().filterShared(Visibility{ true });
     for (auto it = view.begin(); it != view.end(); ++it)
     {
-        auto& [id, pos, size] = *it;
+        auto& [id, pos, size, color] = *it;
         auto& currentSpriteDesc = *it.getSharedComponent<Sprite>();
 
         if (!ecs::equals(usedSpriteDesc, currentSpriteDesc))
@@ -670,8 +702,8 @@ void render_sprites()
             auto textureSize = sprite.getTexture()->getSize();
             sprite.setOrigin(textureSize.x * 0.5f, textureSize.y * 0.5f);
             sizeCorrection = vec(1.0f / textureSize.x, 1.0f / textureSize.y);
-            sprite.setColor(usedSpriteDesc.color);
         }
+        sprite.setColor(sf::Color(color.color));
         vec scale = vec(size.x * sizeCorrection.x, size.y * sizeCorrection.y);
         vec center = pos;
         center.y = g_Globals.screenSize.y - center.y;
@@ -810,21 +842,31 @@ struct UpdateBallTrailParticles : public ecs::System
         JOB_SET_FN(emitJob)
         {
             auto& [id, pos, emitter] = *it;
-
             emitter.timeUntilNextEmit -= elapsedTime;
             if (emitter.timeUntilNextEmit < 0.0f)
             {
-                emitter.timeUntilNextEmit = emitterInterval;
-                it.getView()->createEntity(g_Globals.prefabs.particle, pos);
+                emitter.timeUntilNextEmit += emitterInterval;
+                auto tintColor = it.getComponent<TintColor>();
+                if (tintColor)
+                    it.getView()->createEntity(g_Globals.prefabs.particle, pos, *tintColor);
+                else
+                    it.getView()->createEntity(g_Globals.prefabs.particle, pos);
             }
         };
         JOB_SCHEDULE(emitJob);
 
-        auto updateParticlesJob = ecs::Job(ecs->view<Particle>());
+        auto updateParticlesJob = ecs::Job(ecs->view<Particle, TintColor>());
+        float particleLifeTime = Particle().timeToLive;
         JOB_SET_FN(updateParticlesJob)
         {
-            auto& [id, particle] = *it;
+            auto& [id, particle, tintColor] = *it;
             particle.timeToLive -= elapsedTime;
+            float lifeT = particle.timeToLive / particleLifeTime;
+            
+            sf::Color sfColor(tintColor.color);
+            sfColor.a = (uint8_t)(lifeT * 255);
+            tintColor.color = sfColor.toInteger();
+
             if (particle.timeToLive < 0.0f)
                 it.getView()->deleteEntity(id);
         };

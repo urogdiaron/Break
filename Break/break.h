@@ -57,6 +57,12 @@ struct AttachedToPaddle
 
 struct Ball
 {
+    enum class Modifier
+    {
+        Normal,
+        Unstoppable
+    };
+    Modifier modifier;
 };
 
 struct Brick
@@ -64,9 +70,11 @@ struct Brick
     enum class Type
     {
         Simple,
-        Ballspawner
+        Ballspawner,
+        BallModifier
     };
     Type type = Type::Simple;
+    Ball::Modifier ballModifier = Ball::Modifier::Normal;
 };
 
 struct CollidedWithBall
@@ -132,7 +140,11 @@ struct TransformOrder
 struct Sprite
 {
     int index = 0;
-    sf::Color color = sf::Color(255, 255, 255, 255);
+};
+
+struct TintColor
+{
+    uint32_t color = 0xffffffff;
 };
 
 struct Globals
@@ -144,12 +156,12 @@ struct Globals
 
     struct Prefabs
     {
-        ecs::Prefab<Size, Position, Velocity, TileReferenceCreator, AttachedToPaddle, Ball, ParticleEmitter, Sprite, Visibility> attachedBall = { Size{ ballRadius * 2, ballRadius * 2 }, TileReferenceCreator{true}, Sprite{3} };
-        ecs::Prefab<Size, Position, Velocity, TileReferenceCreator, Ball, ParticleEmitter, Sprite, Visibility> spawnedBall = { Size{ ballRadius * 2, ballRadius * 2 }, TileReferenceCreator{true}, Sprite{3} };
-        ecs::Prefab<Position, Size, TileReferenceCreator, Paddle, Sprite, Visibility> paddle = { Sprite{2} };
-        ecs::Prefab<Position, Size, TileReferenceCreator, Brick, Sprite, Visibility> brick = { Sprite{1} };
+        ecs::Prefab<Size, Position, Velocity, TileReferenceCreator, AttachedToPaddle, Ball, ParticleEmitter, Sprite, TintColor, Visibility> attachedBall = { Size{ ballRadius * 2, ballRadius * 2 }, TileReferenceCreator{true}, Sprite{3} };
+        ecs::Prefab<Size, Position, Velocity, TileReferenceCreator, Ball, ParticleEmitter, Sprite, TintColor, Visibility> spawnedBall = { Size{ ballRadius * 2, ballRadius * 2 }, TileReferenceCreator{true}, Sprite{3} };
+        ecs::Prefab<Position, Size, TileReferenceCreator, Paddle, Sprite, TintColor, Visibility> paddle = { Sprite{2} };
+        ecs::Prefab<Position, Size, TileReferenceCreator, Brick, Sprite, TintColor, Visibility> brick = { Sprite{1} };
         ecs::Prefab<Position, Size, Camera> camera;
-        ecs::Prefab<Position, Size, Velocity, Particle, Sprite, Visibility, ecs::DontSaveEntity> particle = { Size{ 5.0f, 5.0f },  Sprite{3}, Velocity{ 20, -20 } };
+        ecs::Prefab<Position, Size, Velocity, Particle, Sprite, TintColor, Visibility, ecs::DontSaveEntity> particle = { Size{ 5.0f, 5.0f },  Sprite{3}, Velocity{ 20, -20 } };
     };
 
     ecs::Ecs ecs;
