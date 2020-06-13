@@ -77,6 +77,11 @@ struct Brick
     Ball::Modifier ballModifier = Ball::Modifier::Normal;
 };
 
+struct BallModifierArea
+{
+    Ball::Modifier ballModifier = Ball::Modifier::Normal;
+};
+
 struct CollidedWithBall
 {
 };
@@ -132,6 +137,11 @@ struct Tile
     std::vector<ecs::entityId> ids;
 };
 
+struct Hitpoints
+{
+    int hp = 1;
+};
+
 struct TransformOrder
 {
     int order = 0;
@@ -140,6 +150,10 @@ struct TransformOrder
 struct Sprite
 {
     int index = 0;
+};
+
+struct RectRender
+{
 };
 
 struct TintColor
@@ -159,7 +173,8 @@ struct Globals
         ecs::Prefab<Size, Position, Velocity, TileReferenceCreator, AttachedToPaddle, Ball, ParticleEmitter, Sprite, TintColor, Visibility> attachedBall = { Size{ ballRadius * 2, ballRadius * 2 }, TileReferenceCreator{true}, Sprite{3} };
         ecs::Prefab<Size, Position, Velocity, TileReferenceCreator, Ball, ParticleEmitter, Sprite, TintColor, Visibility> spawnedBall = { Size{ ballRadius * 2, ballRadius * 2 }, TileReferenceCreator{true}, Sprite{3} };
         ecs::Prefab<Position, Size, TileReferenceCreator, Paddle, Sprite, TintColor, Visibility> paddle = { Sprite{2} };
-        ecs::Prefab<Position, Size, TileReferenceCreator, Brick, Sprite, TintColor, Visibility> brick = { Sprite{1} };
+        ecs::Prefab<Position, Size, TileReferenceCreator, Brick, Hitpoints, Sprite, TintColor, Visibility> brick = { Sprite{1} };
+        ecs::Prefab<Position, Size, BallModifierArea, RectRender, TintColor, Visibility> ballModifierArea = { TintColor{ sf::Color(0, 255, 0, 50).toInteger() } };
         ecs::Prefab<Position, Size, Camera> camera;
         ecs::Prefab<Position, Size, Velocity, Particle, Sprite, TintColor, Visibility, ecs::DontSaveEntity> particle = { Size{ 5.0f, 5.0f },  Sprite{3}, Velocity{ 20, -20 } };
     };

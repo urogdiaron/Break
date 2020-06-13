@@ -79,6 +79,8 @@ void register_types(){
     ecs.registerType<AttachedToPaddle>("AttachedToPaddle");
     ecs.registerType<Ball>("Ball");
     ecs.registerType<Brick>("Brick");
+    ecs.registerType<BallModifierArea>("BallModifierArea");
+    ecs.registerType<Hitpoints>("Hitpoints");
     ecs.registerType<CollidedWithBall>("CollidedWithBall");
     ecs.registerType<Camera>("Camera");
     ecs.registerType<Visibility>("Visibility", ecs::ComponentType::Shared);     // the exact value doesnt need to be saved but the existence of this should be
@@ -86,6 +88,7 @@ void register_types(){
     ecs.registerType<ParticleEmitter>("ParticleEmitter");
     ecs.registerType<TransformOrder>("TransformOrder", ecs::ComponentType::Shared);
     ecs.registerType<Sprite>("Sprite", ecs::ComponentType::Shared);
+    ecs.registerType<RectRender>("RectRender");
     ecs.registerType<TintColor>("TintColor");
 }
 
@@ -335,8 +338,8 @@ void setup_level(GameState& gamestate)
     auto size = Size{ 150.0f, Globals::paddleHeight };
     entityId paddleId = ecs.createEntity(g_Globals.prefabs.paddle, pos, size);
 
-    int rows = 50;
-    int columns = 50;
+    int rows = 10;
+    int columns = 10;
 
     float brickSpacing = 0;
 
@@ -356,19 +359,30 @@ void setup_level(GameState& gamestate)
 		for (int i = 0; i < columns; i++)
 		{
             Brick brick;
+            Hitpoints hp;
+            TintColor color{ getColorForBrick(brick.type).toInteger() };
             int random = rand() % 10;
             if (random == 0)
+            {
                 brick.type = Brick::Type::Ballspawner;
-            else if (random == 1)
+                color.color = getColorForBrick(brick.type).toInteger();
+            }
+            else if (random == -1)
             {
                 brick.type = Brick::Type::BallModifier;
                 brick.ballModifier = Ball::Modifier::Unstoppable;
+                color.color = getColorForBrick(brick.type).toInteger();
+            }
+            else if (random == 2)
+            {
+                hp.hp = 5;
+                color.color = sf::Color::Black.toInteger();
             }
 
             ecs::entityId id = ecs.createEntity(g_Globals.prefabs.brick,
                 Position{ currentBrickPos }, Size{ brickSize }, brick,
                 Sprite{ 1 }, 
-                TintColor{ getColorForBrick(brick.type).toInteger() }
+                hp, color
             );
             currentBrickPos.x += brickSize.x + brickSpacing;
         }
@@ -376,6 +390,7 @@ void setup_level(GameState& gamestate)
         currentBrickPos.y -= brickSize.y + brickSpacing;
     }
 
+    ecs.createEntity(g_Globals.prefabs.ballModifierArea, Position{ 300, 300 }, Size{ 150, 200 }, BallModifierArea{ Ball::Modifier::Unstoppable });
     g_Globals.camera = ecs.createEntity(g_Globals.prefabs.camera, Position{ g_Globals.screenSize * 0.5f }, Size{ g_Globals.screenSize });
 }
 
@@ -586,49 +601,71 @@ struct ResolveBallCollisions : public ecs::System
     {
         for (auto& ballCollision : g_Globals.ballCollisions)
         {
-            auto [vel, ball, tintColor] = ecs->getComponents<Velocity, Ball, TintColor>(ballCollision.ballId);
-            auto brick = ecs->getComponent<Brick>(ballCollision.otherObjectId);
+            auto [pos, vel, ball, tintColor] = ecs->getComponents<Position, Velocity, Ball, TintColor>(ballCollision.ballId);
+            auto [brick] = ecs->getComponents<Brick>(ballCollision.otherObjectId);
 
             if (brick && brick->type == Brick::Type::BallModifier)
-            {
                 ball->modifier = brick->ballModifier;
-                tintColor->color = getColorForBrick(Brick::Type::BallModifier).toInteger();
-            }
 
-            if (ball->modifier == Ball::Modifier::Unstoppable)
-            {
-                if(brick)
-                    continue;
-            }
+            bool bounceBack = true;
+            if (ball->modifier == Ball::Modifier::Unstoppable && brick)
+                bounceBack = false;
 
             // this assumes the bricks are not moving!
             // so that their relative velocities are the same as the ball's velocity
-            if (vec_dot(*vel, ballCollision.overlap.normal) > 0)
+            if (!bounceBack || vec_dot(*vel, ballCollision.overlap.normal) > 0)
                 continue;
 
             (vec&)*vel = vec_reflect(*vel, ballCollision.overlap.normal);
-            int a = 56;
-            a = 235;
-            //(vec&)*pos += ballCollision.overlap.normal * ballCollision.overlap.penetration;
+            (vec&)*pos -= ballCollision.overlap.normal * ballCollision.overlap.penetration;
         }
+
+        auto ballModifierAreaCollisions = ecs::Job(ecs->view<Position, Size, Ball>());
+        auto ballModifiers = ecs->view<Position, Size, BallModifierArea>();
+        ballModifiers.initializeData();
+
+        JOB_SET_FN(ballModifierAreaCollisions)
+        {
+            auto [ballId, pos, size, ball] = *it;
+            ball.modifier = Ball::Modifier::Normal;
+            for (auto& [modId, modPos, modSize, mod] : ballModifiers)
+            {
+                OverlapResult overlap;
+                if (test_circle_aabb_overlap(overlap, pos, size.x, modPos - modSize * 0.5f, modPos + modSize * 0.5f, true))
+                {
+                    ball.modifier = mod.ballModifier;
+                    break;
+                }
+            }
+        };
+        JOB_SCHEDULE(ballModifierAreaCollisions);
     }
 };
 
-struct HandleBrickCollisions : public ecs::System
+struct ResolveBrickCollisions : public ecs::System
 {
     void scheduleJobs() override
     {
-        auto brickCollisions = ecs::Job(ecs->view<Position, Size, TileReference, Brick>().with<CollidedWithBall>());
+        auto brickCollisions = ecs::Job(ecs->view<Position, Size, TileReference, Brick, Hitpoints>().with<CollidedWithBall>());
         JOB_SET_FN(brickCollisions)
         {
-            auto& [brickId, pos, size, tileRef, brick] = *it;
+            auto& [brickId, pos, size, tileRef, brick, hitpoints] = *it;
             if (brick.type == Brick::Type::Ballspawner)
             {
                 vec ballPosition = pos - vec(0, size.y + Globals::ballRadius);
                 vec ballVelocity = vec(0, -Globals::ballStartingSpeed);
                 auto newBallId = it.getView()->createEntity(g_Globals.prefabs.spawnedBall, Position{ ballPosition }, Velocity{ ballVelocity });
             }
-            it.getView()->deleteEntity(brickId);
+
+            hitpoints.hp -= 1;
+            if (hitpoints.hp <= 0) 
+            {
+                it.getView()->deleteEntity(brickId);
+            }
+            else
+            {
+                it.getView()->deleteComponents<CollidedWithBall>(brickId);
+            }
         };
         JOB_SCHEDULE(brickCollisions);
     }
@@ -639,6 +676,28 @@ bool has_balls_in_play()
     auto balls = getEcs().view<>().with<Ball>();
     return balls.getCount() > 0;
 }
+
+struct UpdateBallColor : public ecs::System
+{
+    void scheduleJobs() override
+    {
+        auto updateBallColor = ecs::Job(ecs->view<const Ball, TintColor>());
+        JOB_SET_FN(updateBallColor)
+        {
+            auto [id, ball, tintColor] = *it;
+            switch (ball.modifier)
+            {
+            case Ball::Modifier::Normal:
+                tintColor.color = 0xffffffff;
+                break;
+            case Ball::Modifier::Unstoppable:
+                tintColor.color = 0x00ff00ff;
+                break;
+            }
+        };
+        JOB_SCHEDULE(updateBallColor);
+    }
+};
 
 struct UpdateVisibility : public ecs::System
 {
@@ -710,6 +769,15 @@ void render_sprites()
         sprite.setPosition(center);
         sprite.setScale(scale);
         g_Globals.window.draw(sprite);
+    }
+}
+
+void render_primitives()
+{
+    auto renderRects = getEcs().view<Position, Size, TintColor>().with<RectRender>().filterShared(Visibility{ true });
+    for (auto& [id, pos, size, color] : renderRects)
+    {
+        render_rect(pos, size, sf::Color(color.color));
     }
 }
 
@@ -900,11 +968,14 @@ void update()
     scheduler.runSystems();
 
     scheduler.scheduleSystem<ResolveBallCollisions>();
-    scheduler.scheduleSystem<HandleBrickCollisions>();
+    scheduler.scheduleSystem<ResolveBrickCollisions>();
     scheduler.runSystems();
 
     update_ball_respawns();
     update_camera_move();
+
+    scheduler.scheduleSystem<UpdateBallColor>();
+    scheduler.runSystems();
 
     clear_tile_references_for_deleted_entities();
 
@@ -958,6 +1029,7 @@ void render()
     getScheduler().runSystems();
 
     render_sprites();
+    render_primitives();
     //render_tile_debug();
     render_stats();
 }
