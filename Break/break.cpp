@@ -338,8 +338,8 @@ void setup_level(GameState& gamestate)
     auto size = Size{ 150.0f, Globals::paddleHeight };
     entityId paddleId = ecs.createEntity(g_Globals.prefabs.paddle, pos, size);
 
-    int rows = 10;
-    int columns = 10;
+    int rows = 50;
+    int columns = 50;
 
     float brickSpacing = 0;
 
@@ -617,7 +617,7 @@ struct ResolveBallCollisions : public ecs::System
                 continue;
 
             (vec&)*vel = vec_reflect(*vel, ballCollision.overlap.normal);
-            (vec&)*pos -= ballCollision.overlap.normal * ballCollision.overlap.penetration;
+            (vec&)*pos += ballCollision.overlap.normal * ballCollision.overlap.penetration;
         }
 
         auto ballModifierAreaCollisions = ecs::Job(ecs->view<Position, Size, Ball>());
@@ -1070,6 +1070,7 @@ int main()
     auto& window = g_Globals.window;
     window.setMouseCursorVisible(false);
     window.setMouseCursorGrabbed(true);
+    window.setVerticalSyncEnabled(true);
 
     spawn_ball_on_paddle();
 
@@ -1079,9 +1080,10 @@ int main()
     while (window.isOpen())
     {
         sf::Time elapsedTime = clock.restart();
-        g_Globals.elapsedTime = elapsedTime.asSeconds();
-        g_Globals.elapsedTime *= g_Globals.timeMultipler;
-        g_Globals.elapsedTime = std::min(g_Globals.elapsedTime, 1.0f / 60);
+        //g_Globals.elapsedTime = elapsedTime.asSeconds();
+        //g_Globals.elapsedTime *= g_Globals.timeMultipler;
+        //g_Globals.elapsedTime = std::min(g_Globals.elapsedTime, 1.0f / 60);
+        g_Globals.elapsedTime = 1.0f / 60;
 
         if (g_Globals.isPaused)
             g_Globals.elapsedTime = 0.0f;
@@ -1120,6 +1122,25 @@ int main()
                     break;
                 case sf::Keyboard::F6:
                     load_ecs();
+                    break;
+                case sf::Keyboard::F7:
+                    {
+                        std::ofstream stream("brick.prefab", std::ios::out | std::ios::binary);
+                        auto prefabCopy = g_Globals.prefabs.brick;
+                        prefabCopy.setDefaultValue(Size{ 50, 50 });
+                        getEcs().savePrefab(stream, prefabCopy);
+                    }
+                    break;
+                case sf::Keyboard::F8:
+                    {
+                        std::ifstream stream;
+                        stream.open("brick.prefab", std::ios::binary);
+                        entityId newBrick = g_Globals.ecs.createEntityFromPrefabStream(stream);
+                        stream.close();
+                        auto pos = getEcs().getComponent<Position>(newBrick);
+                        pos->x = 400;
+                        pos->y = 400;
+                    }
                     break;
                 }
             }

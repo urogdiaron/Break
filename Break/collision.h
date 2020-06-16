@@ -116,11 +116,11 @@ bool test_circle_aabb_overlap(OverlapResult& result, vec circleCenter, float cir
     if (circleCenterInsideAabb)
     {
         result.normal = vec_normalize(-toCircle);
-        result.penetration = r - d;
+        result.penetration = d - r;
     }
     else
     {
-        result.penetration = d - r;
+        result.penetration = r - d;
     }
 
 
