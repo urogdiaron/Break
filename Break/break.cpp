@@ -1,6 +1,7 @@
 #include "break.h"
 #include <iostream>
 #include <fstream>
+#include <windows.h>
 
 Globals g_Globals;
 
@@ -142,6 +143,7 @@ void insert_into_tiles(ecs::entityId id, const Position& pos, const Size& size, 
     int tileCountY = get_tile_count_y();
 
     auto& tiles = tileRef.isBall ? g_Globals.tilesBalls : g_Globals.tilesBricks;
+    tileRef.lastProcessedPosition = pos;
 
     for (int y = firstTileY; y <= lastTileY; y++)
     {
@@ -153,10 +155,7 @@ void insert_into_tiles(ecs::entityId id, const Position& pos, const Size& size, 
             if (x < 0 || x >= tileCountX)
                 continue;
 
-            g_Globals.tilesMtx.lock();
             auto& tile = tiles[y * tileCountX + x];
-            g_Globals.tilesMtx.unlock();
-
             {
 #ifdef LOCK_TILES
                 std::lock_guard<std::mutex> lock(tile.mtx);
@@ -168,9 +167,11 @@ void insert_into_tiles(ecs::entityId id, const Position& pos, const Size& size, 
     }
 }
 
-void update_tiles_after_move(ecs::entityId id, const Position& oldPos, const Position& newPos, const Size& size, TileReference& tileRef)
+void update_tiles_after_move(ecs::entityId id, const Position& newPos, const Size& size, TileReference& tileRef)
 {
     EASY_FUNCTION();
+    Position oldPos = tileRef.lastProcessedPosition;
+
     vec oldMin = oldPos - size * 0.5f;
     vec oldMax = oldPos + size * 0.5f;
 
@@ -194,6 +195,7 @@ void update_tiles_after_move(ecs::entityId id, const Position& oldPos, const Pos
 
     auto& tiles = tileRef.isBall ? g_Globals.tilesBalls : g_Globals.tilesBricks;
 
+    bool deleted = false;
     for (int y = oldFirstTileY; y <= oldLastTileY; y++)
     {
         if (y < 0 || y >= tileCountY)
@@ -208,10 +210,7 @@ void update_tiles_after_move(ecs::entityId id, const Position& oldPos, const Pos
             bool isOutsideX = (x < newFirstTileX || x > newLastTileX);
             if (isOutsideX || isOutsideY)
             {
-                g_Globals.tilesMtx.lock();
                 auto& tile = tiles[y * tileCountX + x];
-                g_Globals.tilesMtx.unlock();
-
                 {
 #ifdef LOCK_TILES
                     std::lock_guard<std::mutex> lock(tile.mtx);
@@ -219,6 +218,7 @@ void update_tiles_after_move(ecs::entityId id, const Position& oldPos, const Pos
                     auto it = std::find(tile.ids.begin(), tile.ids.end(), id);
                     if (it != tile.ids.end())
                     {
+                        deleted = true;
                         unordered_delete(tile.ids, it);
                         auto itTileRef = std::find(tileRef.tiles.begin(), tileRef.tiles.end(), std::make_pair(x, y));
                         if (itTileRef != tileRef.tiles.end())
@@ -229,6 +229,7 @@ void update_tiles_after_move(ecs::entityId id, const Position& oldPos, const Pos
         }
     }
 
+    bool added = false;
     for (int y = newFirstTileY; y <= newLastTileY; y++)
     {
         if (y < 0 || y >= tileCountY)
@@ -243,10 +244,7 @@ void update_tiles_after_move(ecs::entityId id, const Position& oldPos, const Pos
             bool isOutsideX = (x < oldFirstTileX || x > oldLastTileX);
             if (isOutsideX || isOutsideY)
             {
-                g_Globals.tilesMtx.lock();
                 auto& tile = tiles[y * tileCountX + x];
-                g_Globals.tilesMtx.unlock();
-
                 {
 #ifdef LOCK_TILES
                     std::lock_guard<std::mutex> lock(tile.mtx);
@@ -254,6 +252,7 @@ void update_tiles_after_move(ecs::entityId id, const Position& oldPos, const Pos
                     auto it = std::find(tile.ids.begin(), tile.ids.end(), id);
                     if (it == tile.ids.end())
                     {
+                        added = true;
                         tile.ids.push_back(id);
                         tileRef.tiles.push_back(std::make_pair(x, y));
                     }
@@ -261,6 +260,8 @@ void update_tiles_after_move(ecs::entityId id, const Position& oldPos, const Pos
             }
         }
     }
+
+    tileRef.lastProcessedPosition = newPos;
 }
 
 void update_tiles_for_deletion(ecs::entityId id, const TileReference& tileRef)
@@ -270,10 +271,7 @@ void update_tiles_for_deletion(ecs::entityId id, const TileReference& tileRef)
 
     for (auto [x, y] : tileRef.tiles)
     {
-        g_Globals.tilesMtx.lock();
         auto& tile = tiles[y * tileCountX + x];
-        g_Globals.tilesMtx.unlock();
-
         {
 #ifdef LOCK_TILES
             std::lock_guard<std::mutex> lock(tile.mtx);
@@ -429,11 +427,10 @@ void update_paddle_by_mouse()
     float screenSizeX = g_Globals.screenSize.x;
     for (auto& [id, pos, size, tileRef] : getEcs().view<Position, Size, TileReference>().with<Paddle>())
     {
-        auto oldPos = pos;
         pos.x = mousePosition.x;
         pos.x = std::max(pos.x, size.x * 0.5f);
         pos.x = std::min(pos.x, screenSizeX - size.x * 0.5f);
-        update_tiles_after_move(id, oldPos, pos, size, tileRef);
+        update_tiles_after_move(id, pos, size, tileRef);
     }
 }
 
@@ -446,9 +443,8 @@ void update_balls_attached_to_paddle()
         auto paddlePos = ecs.getComponent<Position>(attach.paddleId);
         if (!paddlePos)
             continue;
-        auto oldPos = pos;
         pos = *paddlePos + attach.relativePos;
-        update_tiles_after_move(id, oldPos, pos, Size(Globals::ballRadius, Globals::ballRadius), tileRef);
+        update_tiles_after_move(id, pos, Size(Globals::ballRadius, Globals::ballRadius), tileRef);
     }
 }
 
@@ -457,6 +453,8 @@ struct TiledPositionByVelocitySystem : public ecs::System
     void scheduleJobs() override
     {
         float dt = g_Globals.elapsedTime;
+        if (dt == 0.0f)
+            return;
 
         auto updateTiledPositions = ecs::Job(ecs->view<Position, const Velocity, const Size, TileReference>().exclude<AttachedToPaddle>());
         JOB_SET_FN(updateTiledPositions)
@@ -465,9 +463,8 @@ struct TiledPositionByVelocitySystem : public ecs::System
             if (vel.x == 0.0f && vel.y == 0.0)
                 return;
 
-            auto oldPos = pos;
             pos += vel * dt;
-            update_tiles_after_move(id, oldPos, pos, Size(Globals::ballRadius, Globals::ballRadius), tileRef);
+            update_tiles_after_move(id, pos, size, tileRef);
         };
         JOB_SCHEDULE(updateTiledPositions);
     }
@@ -617,6 +614,10 @@ struct ResolveBallCollisions : public ecs::System
                 continue;
 
             (vec&)*vel = vec_reflect(*vel, ballCollision.overlap.normal);
+
+            // TODO the problem is altering the position here is that the tiled movement doesn't know about this movement
+            // It always updates tiles that changed since the last frame, it assumes that the last position it processed is 
+            // the one before the next velocity update. Probably we just need to save the last processed position in the tileRef comp.
             (vec&)*pos += ballCollision.overlap.normal * ballCollision.overlap.penetration;
         }
 
@@ -1062,6 +1063,8 @@ int main()
 
     EASY_MAIN_THREAD;
 
+    SetPriorityClass(GetCurrentProcess(), HIGH_PRIORITY_CLASS);
+
     init_globals();
     setup_level(g_Globals.gameState);
 
@@ -1140,6 +1143,11 @@ int main()
                         auto pos = getEcs().getComponent<Position>(newBrick);
                         pos->x = 400;
                         pos->y = 400;
+                    }
+                    break;
+                case sf::Keyboard::N:
+                    {
+                        getEcs().oldPrefabCreation = !getEcs().oldPrefabCreation;
                     }
                     break;
                 }

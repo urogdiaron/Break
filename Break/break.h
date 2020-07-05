@@ -96,6 +96,7 @@ struct TileReference
     TileReference() = default;
     TileReference(bool isBall) : isBall(isBall) {}
     std::vector<std::pair<int, int>> tiles;
+    Position lastProcessedPosition;
     bool isBall = false;
 };
 

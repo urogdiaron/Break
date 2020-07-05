@@ -11,7 +11,7 @@ Game should be more complex, this is not pushing the system at all.
     Although preferably i want features that don't involve physics because it seems too hard to do well with dynamically increasing acceleration structures and stuff. I'd rather add enemies with AI or bricks and balls with crazy behaviour.
 
     Add hp to blocks that change their sprites. 
-    Add areas that change ball behaviour (also visuals).
+    Add areas that change ball behaviour (also visuals). Attach these areas to the paddle, or shoot them at will.
     Pickups that change balls.
     Ball behaviours: Anti-ballmagnet, kills your paddle, moves through bricks, pushes other balls
     Brick behaviours: Moving/rotating (physics yikes), indestructible, pass-through, avoids balls by moving, accelerates ball
