@@ -336,8 +336,8 @@ void setup_level(GameState& gamestate)
     auto size = Size{ 150.0f, Globals::paddleHeight };
     entityId paddleId = ecs.createEntity(g_Globals.prefabs.paddle, pos, size);
 
-    int rows = 50;
-    int columns = 50;
+    int rows = 80;
+    int columns = 80;
 
     float brickSpacing = 0;
 
@@ -360,12 +360,12 @@ void setup_level(GameState& gamestate)
             Hitpoints hp;
             TintColor color{ getColorForBrick(brick.type).toInteger() };
             int random = rand() % 10;
-            if (random == 0)
+            if (random == 0 || random == 3)
             {
                 brick.type = Brick::Type::Ballspawner;
                 color.color = getColorForBrick(brick.type).toInteger();
             }
-            else if (random == -1)
+            else if (random == 1)
             {
                 brick.type = Brick::Type::BallModifier;
                 brick.ballModifier = Ball::Modifier::Unstoppable;
@@ -599,7 +599,7 @@ struct ResolveBallCollisions : public ecs::System
         for (auto& ballCollision : g_Globals.ballCollisions)
         {
             auto [pos, vel, ball, tintColor] = ecs->getComponents<Position, Velocity, Ball, TintColor>(ballCollision.ballId);
-            auto [brick] = ecs->getComponents<Brick>(ballCollision.otherObjectId);
+            auto [brick, brickVel] = ecs->getComponents<Brick, Velocity>(ballCollision.otherObjectId);
 
             if (brick && brick->type == Brick::Type::BallModifier)
                 ball->modifier = brick->ballModifier;
@@ -608,16 +608,17 @@ struct ResolveBallCollisions : public ecs::System
             if (ball->modifier == Ball::Modifier::Unstoppable && brick)
                 bounceBack = false;
 
-            // this assumes the bricks are not moving!
-            // so that their relative velocities are the same as the ball's velocity
-            if (!bounceBack || vec_dot(*vel, ballCollision.overlap.normal) > 0)
+            if (!bounceBack)
+                continue;
+
+            vec brickVelocity = brickVel ? *brickVel : vec(0, 0);
+            vec ballRelativeVelocity = *vel - brickVelocity;
+
+            // Don't make the ball bounce if it's already moving towards the normal
+            if (vec_dot(ballRelativeVelocity, ballCollision.overlap.normal) > 0)
                 continue;
 
             (vec&)*vel = vec_reflect(*vel, ballCollision.overlap.normal);
-
-            // TODO the problem is altering the position here is that the tiled movement doesn't know about this movement
-            // It always updates tiles that changed since the last frame, it assumes that the last position it processed is 
-            // the one before the next velocity update. Probably we just need to save the last processed position in the tileRef comp.
             (vec&)*pos += ballCollision.overlap.normal * ballCollision.overlap.penetration;
         }
 
@@ -1037,19 +1038,36 @@ void render()
 
 void save_ecs()
 {
-    std::ofstream stream("saved_scene.brk", std::ios::out | std::ios::binary);
+
+    std::vector<char> data((1 << 20) * 10); // 10MB
+    MyStream stream(data.data());
     g_Globals.ecs.save(stream);
     stream.write((const char*)&g_Globals.camera, sizeof(g_Globals.camera));
-    stream.close();
+    
+    std::ofstream filestream("saved_scene.brk", std::ios::out | std::ios::binary);
+    filestream.write(data.data(), stream.size());
+    filestream.close();
 }
 
 void load_ecs()
 {
-    std::ifstream stream;
-    stream.open("saved_scene.brk", std::ios::binary);
+    std::ifstream filestream;
+
+    filestream.open("saved_scene.brk", std::ios::binary);
+    filestream.ignore(std::numeric_limits<std::streamsize>::max());
+    std::streamsize length = filestream.gcount();
+    filestream.clear();   //  Since ignore will have set eof.
+    filestream.seekg(0, std::ios_base::beg);
+
+
+    std::vector<char> data(length);
+    filestream.read(data.data(), length);
+    MyStream stream(data.data());
+
     g_Globals.ecs.load(stream);
     stream.read((char*)&g_Globals.camera, sizeof(g_Globals.camera));
-    stream.close();
+
+    filestream.close();
 
     g_Globals.ballRespawnTimer = -1.0f;
     g_Globals.ballCollisions.clear();
@@ -1128,26 +1146,33 @@ int main()
                     break;
                 case sf::Keyboard::F7:
                     {
-                        std::ofstream stream("brick.prefab", std::ios::out | std::ios::binary);
+                        std::ofstream filestream("brick.prefab", std::ios::out | std::ios::binary);
                         auto prefabCopy = g_Globals.prefabs.brick;
                         prefabCopy.setDefaultValue(Size{ 50, 50 });
+                        std::vector<char> data(1 << 20);
+                        MyStream stream(data.data());
                         getEcs().savePrefab(stream, prefabCopy);
+                        filestream.write(data.data(), data.size());
                     }
                     break;
                 case sf::Keyboard::F8:
                     {
-                        std::ifstream stream;
-                        stream.open("brick.prefab", std::ios::binary);
+                        std::ifstream filestream;
+                        filestream.open("brick.prefab", std::ios::binary);
+                        filestream.ignore(std::numeric_limits<std::streamsize>::max());
+                        std::streamsize length = filestream.gcount();
+                        filestream.clear();   //  Since ignore will have set eof.
+                        filestream.seekg(0, std::ios_base::beg);
+                        
+                        std::vector<char> data(length);
+                        filestream.read(data.data(), length);
+
+                        MyStream stream(data.data());
                         entityId newBrick = g_Globals.ecs.createEntityFromPrefabStream(stream);
-                        stream.close();
+                        filestream.close();
                         auto pos = getEcs().getComponent<Position>(newBrick);
                         pos->x = 400;
                         pos->y = 400;
-                    }
-                    break;
-                case sf::Keyboard::N:
-                    {
-                        getEcs().oldPrefabCreation = !getEcs().oldPrefabCreation;
                     }
                     break;
                 }

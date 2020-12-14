@@ -1,8 +1,40 @@
 #pragma once
-#define BUILD_WITH_EASY_PROFILER
+//#define BUILD_WITH_EASY_PROFILER
 #define EASY_OPTION_START_LISTEN_ON_STARTUP 1
 #define EASY_OPTION_LOG_ENABLED 1
 #include "easy/profiler.h"
+
+class MyStream
+{
+public:
+    MyStream(void* buffer)
+        : buffer(buffer)
+    {}
+
+    void read(char* data, size_t size)
+    {
+        memcpy(data, (char*)buffer + pos, size);
+        pos += size;
+    }
+    void write(const char* data, size_t size)
+    {
+        memcpy((char*)buffer + pos, data, size);
+        pos += size;
+    }
+
+    void reset()
+    {
+        pos = 0;
+    }
+
+    size_t size() const { return pos; }
+
+private:
+    void* buffer;
+    size_t pos = 0;
+};
+
+using istream = MyStream;
 
 
 #include <vector>
@@ -183,7 +215,7 @@ struct Globals
     ecs::Ecs ecs;
     ecs::Scheduler scheduler = ecs::Scheduler(&ecs);
     GameState gameState;
-    vec screenSize{ 800, 600 };
+    vec screenSize{ 1024, 768 };
     sf::RenderWindow window{ sf::VideoMode{ (uint)screenSize.x, (uint)screenSize.y }, "Break" };
 
     sf::RectangleShape rectPrototype;

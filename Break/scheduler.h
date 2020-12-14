@@ -11,7 +11,7 @@ namespace ecs
 		Scheduler(Ecs* ecs)
 			: ecs(ecs)
 		{
-			taskScheduler.Init({ 400, 0, ftl::EmptyQueueBehavior::Spin });
+			taskScheduler.Init({ 400, 0, ftl::EmptyQueueBehavior::Sleep });
 		}
 
 		template<class Fn, class... Ts>
