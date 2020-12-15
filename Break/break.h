@@ -1,5 +1,5 @@
 #pragma once
-//#define BUILD_WITH_EASY_PROFILER
+#define BUILD_WITH_EASY_PROFILER
 #define EASY_OPTION_START_LISTEN_ON_STARTUP 1
 #define EASY_OPTION_LOG_ENABLED 1
 #include "easy/profiler.h"

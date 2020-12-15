@@ -287,7 +287,7 @@ void update_tiles_for_deletion(ecs::entityId id, const TileReference& tileRef)
 
 struct CreateTileReferencesForNewEntities : public ecs::System
 {
-    void scheduleJobs() override
+    void scheduleJobs(ecs::Ecs* ecs) override
     {
         auto createTileReferences = ecs::Job(ecs->view<Position, Size, TileReferenceCreator>().exclude<TileReference>());
         JOB_SET_FN(createTileReferences)
@@ -450,7 +450,7 @@ void update_balls_attached_to_paddle()
 
 struct TiledPositionByVelocitySystem : public ecs::System
 {
-    void scheduleJobs() override
+    void scheduleJobs(ecs::Ecs* ecs) override
     {
         float dt = g_Globals.elapsedTime;
         if (dt == 0.0f)
@@ -472,7 +472,7 @@ struct TiledPositionByVelocitySystem : public ecs::System
 
 struct SimplePositionByVelocitySystem : public ecs::System
 {
-    void scheduleJobs() override
+    void scheduleJobs(ecs::Ecs* ecs) override
     {
         float dt = g_Globals.elapsedTime;
         auto updateSimple = ecs::Job(ecs->view<Position, const Velocity>().exclude<AttachedToPaddle, TileReference>());
@@ -488,7 +488,7 @@ struct SimplePositionByVelocitySystem : public ecs::System
 
 struct UpdateBallCollisionsTiled : public ecs::System
 {
-    void scheduleJobs() override
+    void scheduleJobs(ecs::Ecs* ecs) override
     {
         int tileCountX = get_tile_count_x();
         int tileCountY = get_tile_count_y();
@@ -594,7 +594,7 @@ struct UpdateBallCollisionsTiled : public ecs::System
 
 struct ResolveBallCollisions : public ecs::System
 {
-    void scheduleJobs() override
+    void scheduleJobs(ecs::Ecs* ecs) override
     {
         for (auto& ballCollision : g_Globals.ballCollisions)
         {
@@ -646,7 +646,7 @@ struct ResolveBallCollisions : public ecs::System
 
 struct ResolveBrickCollisions : public ecs::System
 {
-    void scheduleJobs() override
+    void scheduleJobs(ecs::Ecs* ecs) override
     {
         auto brickCollisions = ecs::Job(ecs->view<Position, Size, TileReference, Brick, Hitpoints>().with<CollidedWithBall>());
         JOB_SET_FN(brickCollisions)
@@ -681,7 +681,7 @@ bool has_balls_in_play()
 
 struct UpdateBallColor : public ecs::System
 {
-    void scheduleJobs() override
+    void scheduleJobs(ecs::Ecs* ecs) override
     {
         auto updateBallColor = ecs::Job(ecs->view<const Ball, TintColor>());
         JOB_SET_FN(updateBallColor)
@@ -703,7 +703,7 @@ struct UpdateBallColor : public ecs::System
 
 struct UpdateVisibility : public ecs::System
 {
-    void scheduleJobs() override
+    void scheduleJobs(ecs::Ecs* ecs) override
     {
         auto [cameraPos, cameraSize] = ecs->getComponents<Position, Size>(g_Globals.camera);
         vec cameraMin = *cameraPos - *cameraSize * 0.5f;
@@ -810,7 +810,7 @@ void render_tile_debug()
 
 struct UpdateBallMagnet : public ecs::System
 {
-    void scheduleJobs() override
+    void scheduleJobs(ecs::Ecs* ecs) override
     {
         if (!sf::Mouse::isButtonPressed(sf::Mouse::Button::Right))
         {
@@ -903,7 +903,7 @@ void update_camera_move()
 
 struct UpdateBallTrailParticles : public ecs::System
 {
-    void scheduleJobs() override
+    void scheduleJobs(ecs::Ecs* ecs) override
     {
         float elapsedTime = g_Globals.elapsedTime;
         float emitterInterval = 0.01f;

@@ -155,7 +155,7 @@
       <SDLCheck>true</SDLCheck>
       <TreatWarningAsError>true</TreatWarningAsError>
       <LanguageStandard>stdcpp17</LanguageStandard>
-      <AdditionalIncludeDirectories>D:\Code\Break\dependencies\easy_profiler\include;D:\Code\Break\dependencies\SFML-2.4.2\include;D:\Code\Break\dependencies\ftl\include</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(SolutionDir)dependencies\easy_profiler\include;$(SolutionDir)dependencies\SFML-2.4.2\include;$(SolutionDir)..\Ecs\Ecs;$(SolutionDir)dependencies\ftl\include</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
@@ -190,7 +190,6 @@
   <ItemGroup>
     <ClInclude Include="break.h" />
     <ClInclude Include="collision.h" />
-    <ClInclude Include="scheduler.h" />
     <ClInclude Include="util.h" />
     <ClInclude Include="vec.h" />
   </ItemGroup>
